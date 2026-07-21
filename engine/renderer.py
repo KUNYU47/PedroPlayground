@@ -1,4 +1,4 @@
-from engine.world import parse_world, World, WALL
+from engine.world import parse_world, World, WALL, BASE
 from engine.sprites import SpriteManager
 from PIL import ImageTk
 
@@ -83,7 +83,14 @@ class GridRenderer:
                 fill = WALL_COLOR if cell == WALL else EMPTY_COLOR
                 self._canvas.create_rectangle(x1, y1, x2, y2,
                                               fill=fill, outline=GRID_LINE_COLOR, width=1)
-                if cell >= 2:
+                if cell == BASE:
+                    cx, cy = c * cs + cs//2, r * cs + cs//2
+                    s = cs // 3
+                    self._canvas.create_rectangle(cx - s, cy - s, cx + s, cy + s,
+                                                   fill="#4488CC", outline="#225577")
+                    self._canvas.create_text(cx, cy, text="B", font=("", max(8, cs//3)),
+                                              fill="#FFFFFF")
+                elif cell >= 2:
                     self._draw_flag(c, r, cs)
                     if cell > 2:
                         cx = c * cs + cs//2
