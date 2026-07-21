@@ -39,9 +39,13 @@ def _save():
     if _pedro is None or not _output_path:
         return
     try:
-        snapshots = _pedro.get_snapshots()
+        output = {'snapshots': _pedro.get_snapshots()}
+        if not _pedro.is_base_verified() and _pedro.get_planted_at_base() > 0:
+            output['base_error'] = True
+            output['expected_flags'] = _pedro.get_expected_flags()
+            output['planted_at_base'] = _pedro.get_planted_at_base()
         with open(_output_path, 'w', encoding='utf-8') as f:
-            json.dump(snapshots, f)
+            json.dump(output, f)
     except Exception:
         pass
 

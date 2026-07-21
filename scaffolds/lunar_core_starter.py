@@ -34,9 +34,9 @@ def collect_and_count() -> int:
     >>> collect_and_count()
     5
     """
-    # TODO: count variable = 0
-    # TODO: while flag_present(): pick_flag(), count += 1
-    # TODO: return count
+    # TODO: create a variable and set it to 0
+    # TODO: while flag_present(): pick_flag(), increament the variable
+    # TODO: return that variable
 
 def navigate_to_top_left() -> None:
     """
@@ -78,7 +78,7 @@ def plant_flags(amount: int) -> None:
     >>> plant_flags(3)
     >>> # Pedro planted 3 flags here
     """
-    # TODO: for i in range(amount): plant_flag()
+    # TODO: for i in range(how many iterations?): plant_flag()
 
 def main() -> None:
     """

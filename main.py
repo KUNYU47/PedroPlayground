@@ -28,8 +28,13 @@ if len(sys.argv) >= 3 and sys.argv[1] == '--exec':
     def _save():
         if _output_path:
             try:
+                output = {'snapshots': _pedro.get_snapshots()}
+                if not _pedro.is_base_verified() and _pedro.get_planted_at_base() > 0:
+                    output['base_error'] = True
+                    output['expected_flags'] = _pedro.get_expected_flags()
+                    output['planted_at_base'] = _pedro.get_planted_at_base()
                 with open(_output_path, 'w') as f:
-                    _json.dump(_pedro.get_snapshots(), f)
+                    _json.dump(output, f)
             except Exception:
                 pass
     atexit.register(_save)
@@ -61,6 +66,7 @@ if len(sys.argv) >= 3 and sys.argv[1] == '--exec':
     sys.exit(exit_code)
 
 import json
+import random
 import re
 import subprocess
 import tempfile
@@ -71,6 +77,9 @@ from tkinter import Canvas, Menu, Text, font as tkfont, PanedWindow as TkPanedWi
 
 from engine.renderer import GridRenderer
 from engine.sprites import SpriteManager
+from engine.autocomplete import AutocompleteEngine, SuggestionPopup, SignaturePopup
+from engine.autocomplete import PEDRO_FUNCTIONS, PEDRO_DOCS, PYTHON_KEYWORDS, PYTHON_BUILTINS
+from engine.world import generate_maze
 
 
 def _resolve_paths():
@@ -100,8 +109,7 @@ def _copy_bundled_dir(src, dst):
         pass
 
 
-PROJECT_DIR, ASSETS_DIR, WORLDS_DIR, SCAFFOLDS_DIR, ORIGINAL_SCAFFOLDS_DIR = _resolve_paths()
-del PROJECT_DIR
+_, ASSETS_DIR, WORLDS_DIR, SCAFFOLDS_DIR, ORIGINAL_SCAFFOLDS_DIR = _resolve_paths()
 
 ctk.set_appearance_mode("system")
 ctk.set_default_color_theme("blue")
@@ -134,24 +142,6 @@ STRING_COLOR = "#CE9178"
 COMMENT_COLOR = "#6A9955"
 NUMBER_COLOR = "#B5CEA8"
 DECORATOR_COLOR = "#C586C0"
-
-PYTHON_KEYWORDS = {
-    'def', 'class', 'if', 'elif', 'else', 'for', 'while', 'return',
-    'import', 'from', 'as', 'True', 'False', 'None', 'and', 'or', 'not',
-    'in', 'is', 'break', 'continue', 'pass', 'try', 'except', 'finally',
-    'raise', 'with', 'yield', 'lambda', 'global', 'nonlocal', 'assert', 'del',
-}
-PYTHON_BUILTINS = {
-    'print', 'range', 'len', 'int', 'str', 'float', 'bool', 'list', 'dict',
-    'set', 'tuple', 'type', 'input', 'open', 'enumerate', 'zip', 'map',
-    'filter', 'sorted', 'reversed', 'min', 'max', 'sum', 'abs', 'round',
-    'super', 'isinstance', 'issubclass', 'hasattr', 'getattr', 'setattr',
-}
-PEDRO_FUNCTIONS = {
-    'move', 'turn_left', 'plant_flag', 'pick_flag',
-    'front_is_clear', 'flag_present',
-    'facing_north', 'facing_east',
-}
 
 
 class SyntaxHighlighter:
@@ -236,11 +226,20 @@ class PedroApp(ctk.CTk):
         self._current_file = None
         self._original_code = ""
         self._instant_mode = False
+        self._loaded_activity = None
+        self._autocomplete = AutocompleteEngine()
+        self._suggestion_popup = None
+        self._signature_popup = None
+        self._suggestion_job = None
+        self._last_partial = ''
+        self._cached_syntax_error = None
 
         self._sprite_manager = SpriteManager(str(ASSETS_DIR / "Astronaut-Sheet.png"), scale=3)
 
         self._build_menu()
         self._build_layout()
+        self._suggestion_popup = SuggestionPopup(self._editor, EDITOR_FONT_FAMILY, self._font_size)
+        self._signature_popup = SignaturePopup(self._editor, EDITOR_FONT_FAMILY, self._font_size)
         self._apply_initial_sash()
         self.protocol("WM_DELETE_WINDOW", self._on_close)
 
@@ -256,6 +255,15 @@ class PedroApp(ctk.CTk):
                 self._editor.tag_raise(t)
         except Exception:
             pass
+
+    @property
+    def _editor_text(self):
+        return self._editor.get("1.0", "end-1c")
+
+    def _save_code_to_file(self, filepath):
+        code = self._editor_text
+        with open(filepath, 'w', encoding='utf-8') as f:
+            f.write(code)
 
     def _build_menu(self):
         menubar = Menu(self)
@@ -284,7 +292,7 @@ class PedroApp(ctk.CTk):
         activities_menu.add_separator()
         activities_menu.add_command(label="Clear Editor", command=self._clear_editor)
         activities_menu.add_command(label="Open File...", command=self._open_file)
-        menubar.add_cascade(label="Activities", menu=activities_menu)
+        menubar.add_cascade(label="Missions", menu=activities_menu)
 
         worlds_menu = Menu(menubar, tearoff=0, font=menu_font)
         self._rebuild_worlds_menu(worlds_menu)
@@ -369,14 +377,6 @@ class PedroApp(ctk.CTk):
         self._indent_guide.place(relwidth=1, relheight=1, x=6, y=0)
         self._editor.lift()
 
-        from tkinter import Listbox
-        self._suggestion_list = Listbox(editor_bg, font=font_spec,
-            bg="#2D2D2D", fg="#D4D4D4", selectbackground="#3A3A3A",
-            selectforeground="#FFFFFF", relief="flat", bd=1,
-            highlightthickness=0, activestyle="none", height=5)
-        self._suggestion_list.bind("<Button-1>", self._on_suggestion_click)
-        self._suggestion_list.bind("<Double-Button-1>", self._on_suggestion_click)
-
         editor_scroll = ctk.CTkScrollbar(editor_bg, orientation="vertical",
                                           command=self._on_scrollbar)
         editor_scroll.grid(row=0, column=1, sticky="ns")
@@ -399,13 +399,13 @@ class PedroApp(ctk.CTk):
         self._editor.bind("<Control-Z>", lambda e: self._editor.edit_undo())
         self._editor.bind("<Control-y>", lambda e: self._editor.edit_redo())
         self._editor.bind("<Control-Y>", lambda e: self._editor.edit_redo())
-        self._editor.bind("<Control-space>", self._show_suggestions)
-        self._editor.bind("<KeyRelease>", self._on_key_up, add="+")
+        self._editor.bind("<Up>", self._on_editor_up)
+        self._editor.bind("<Down>", self._on_editor_down)
+        self._editor.bind("<Escape>", self._on_editor_escape)
         self._editor.bind("<Motion>", self._on_mouse_move, add="+")
 
         self.bind_all("<F5>", lambda e: self._run_code())
 
-        self._tooltip = None
         self._tooltip_job = None
 
         self._line_numbers.bind("<MouseWheel>", lambda e: self._editor.yview_scroll(int(-1 * (e.delta / 120)), "units"))
@@ -435,7 +435,14 @@ class PedroApp(ctk.CTk):
         canvas_inner.grid_columnconfigure(0, weight=1)
 
         self._canvas = Canvas(canvas_inner, bg="#D0C8B8", highlightthickness=0)
+        h_scroll = ctk.CTkScrollbar(canvas_inner, orientation="horizontal",
+                                     command=self._canvas.xview)
+        v_scroll = ctk.CTkScrollbar(canvas_inner, orientation="vertical",
+                                     command=self._canvas.yview)
+        self._canvas.configure(xscrollcommand=h_scroll.set, yscrollcommand=v_scroll.set)
         self._canvas.grid(row=0, column=0, sticky="nsew")
+        h_scroll.grid(row=1, column=0, sticky="ew")
+        v_scroll.grid(row=0, column=1, sticky="ns")
         self._renderer = GridRenderer(self._canvas, self._sprite_manager)
 
         pane.add(canvas_frame, minsize=300)
@@ -516,7 +523,7 @@ class PedroApp(ctk.CTk):
         self._editor.yview(*args)
 
     def _rebuild_line_numbers(self):
-        text = self._editor.get("1.0", "end-1c")
+        text = self._editor_text
         total = max(text.count("\n") + 1, 1)
         width = max(3, len(str(total)) + 1)
         padded = "\n".join(str(i).rjust(width) for i in range(1, total + 1))
@@ -549,13 +556,16 @@ class PedroApp(ctk.CTk):
             self._editor.tag_remove('error_fg', "1.0", "end")
         except Exception:
             pass
-        code = self._editor.get("1.0", "end-1c")
+        code = self._editor_text
         if not code.strip():
             self._lint_job = None
+            self._cached_syntax_error = None
             return
         try:
             compile(code, '<editor>', 'exec')
+            self._cached_syntax_error = None
         except SyntaxError as e:
+            self._cached_syntax_error = e
             lineno = e.lineno
             if lineno:
                 try:
@@ -634,6 +644,7 @@ class PedroApp(ctk.CTk):
         self._lint_debounce()
         self._highlight_current_line()
         self._draw_indent_guides()
+        self._schedule_autocomplete(event)
 
     def _on_return_release(self, event=None):
         cursor = self._editor.index("insert")
@@ -654,66 +665,132 @@ class PedroApp(ctk.CTk):
         self._on_editor_change()
 
     def _on_return_press(self, event=None):
-        if self._select_suggestion():
+        if self._suggestion_popup.is_visible():
+            self._accept_suggestion()
             return "break"
 
     def _on_editor_tab(self, event=None):
-        if self._select_suggestion():
+        if self._suggestion_popup.is_visible():
+            self._accept_suggestion()
             return "break"
         self._editor.insert("insert", "    ")
         self._on_editor_change()
         return "break"
 
-    def _on_key_up(self, event=None):
-        self._update_cursor_pos()
-        self._match_bracket()
+    def _on_editor_up(self, event=None):
+        if self._suggestion_popup.is_visible():
+            self._suggestion_popup.navigate(-1)
+            return "break"
 
-    def _show_suggestions(self, event=None):
-        self._suggestion_list.delete(0, "end")
-        self._suggestion_list.place_forget()
+    def _on_editor_down(self, event=None):
+        if self._suggestion_popup.is_visible():
+            self._suggestion_popup.navigate(1)
+            return "break"
+
+    def _on_editor_escape(self, event=None):
+        hidden = False
+        if self._suggestion_popup.is_visible():
+            self._suggestion_popup.hide()
+            self._last_partial = ''
+            hidden = True
+        if self._signature_popup.is_visible():
+            self._signature_popup.hide()
+            hidden = True
+        if hidden:
+            return "break"
+
+    def _schedule_autocomplete(self, event=None):
+        if event and event.keysym in (
+            'Up', 'Down', 'Escape', 'Return', 'Tab',
+            'Left', 'Right', 'Home', 'End',
+            'Prior', 'Next',
+            'Control_L', 'Control_R', 'Shift_L', 'Shift_R',
+            'Alt_L', 'Alt_R', 'Meta_L', 'Meta_R',
+        ):
+            return
+        if self._suggestion_job is not None:
+            self.after_cancel(self._suggestion_job)
+        if self._suggestion_popup.is_visible():
+            self._suggestion_job = self.after(50, self._do_autocomplete)
+        else:
+            self._suggestion_job = self.after(300, self._do_autocomplete)
+
+    def _do_autocomplete(self):
+        self._suggestion_job = None
         try:
+            code = self._editor_text
             cursor = self._editor.index("insert")
             lineno = int(cursor.split('.')[0])
             col = int(cursor.split('.')[1])
-            line_text = self._editor.get(f"{lineno}.0", cursor)
         except Exception:
-            return "break"
-        if col < 1:
-            return "break"
-        partial = line_text.split()[-1] if line_text.split() else ""
-        if not partial or len(partial) < 1:
-            return "break"
-        custom_funcs = set()
-        full_code = self._editor.get("1.0", "end-1c")
-        for m in re.finditer(r'def\s+([a-zA-Z_]\w*)\s*\(', full_code):
-            custom_funcs.add(m.group(1))
-        all_funcs = PEDRO_FUNCTIONS | custom_funcs
-        matches = [f for f in sorted(all_funcs) if f.startswith(partial) and f != partial]
-        if not matches:
-            return "break"
-        for m in matches:
-            self._suggestion_list.insert("end", f"{m}()")
-        self._suggestion_list.selection_set(0)
-        try:
+            return
+
+        if self._suggestion_popup.is_visible():
+            line = code.split('\n')[lineno - 1] if lineno <= len(code.split('\n')) else ''
+            m = re.search(r'([a-zA-Z_]\w*)$', line[:col])
+            partial = m.group(1) if m else ''
+            if len(partial) < 2:
+                self._suggestion_popup.hide()
+                self._last_partial = ''
+                return
+            if partial == self._last_partial:
+                return
+            self._last_partial = partial
+            completions = self._autocomplete.complete(code, lineno, col)
+            if not completions:
+                self._suggestion_popup.hide()
+                self._last_partial = ''
+                return
             bbox = self._editor.bbox(cursor)
             if bbox:
-                x = bbox[0] + 10
-                y = bbox[1] + bbox[3] + 4
-                self._suggestion_list.place(x=x, y=y)
-        except Exception:
-            pass
-        return "break"
+                x = self._editor.winfo_rootx() + bbox[0] + 10
+                y = self._editor.winfo_rooty() + bbox[1] + bbox[3] + 4
+                self._suggestion_popup.show(x, y, completions)
+            return
 
-    def _select_suggestion(self):
-        if not self._suggestion_list.winfo_ismapped():
-            return False
-        sel = self._suggestion_list.curselection()
-        if not sel:
-            self._suggestion_list.place_forget()
-            return False
-        text = self._suggestion_list.get(sel[0])
-        func_name = text[:-2]
-        self._suggestion_list.place_forget()
+        if self._signature_popup.is_visible():
+            sig = self._autocomplete.get_signature(code, lineno, col)
+            if sig:
+                bbox = self._editor.bbox(cursor)
+                if bbox:
+                    x = self._editor.winfo_rootx() + bbox[0] + 10
+                    y = self._editor.winfo_rooty() + bbox[1] + bbox[3] + 4
+                    self._signature_popup.show(x, y, sig)
+            else:
+                self._signature_popup.hide()
+            return
+
+        line = code.split('\n')[lineno - 1] if lineno <= len(code.split('\n')) else ''
+        m = re.search(r'([a-zA-Z_]\w*)$', line[:col])
+        partial = m.group(1) if m else ''
+
+        if col >= 1 and len(line) >= col and line[col - 1] == '(':
+            sig = self._autocomplete.get_signature(code, lineno, col)
+            if sig:
+                bbox = self._editor.bbox(cursor)
+                if bbox:
+                    x = self._editor.winfo_rootx() + bbox[0] + 10
+                    y = self._editor.winfo_rooty() + bbox[1] + bbox[3] + 4
+                    self._signature_popup.show(x, y, sig)
+
+        if len(partial) >= 2:
+            self._last_partial = partial
+            completions = self._autocomplete.complete(code, lineno, col)
+            if not completions:
+                return
+            bbox = self._editor.bbox(cursor)
+            if bbox:
+                x = self._editor.winfo_rootx() + bbox[0] + 10
+                y = self._editor.winfo_rooty() + bbox[1] + bbox[3] + 4
+                self._suggestion_popup.show(x, y, completions)
+
+    def _accept_suggestion(self):
+        text = self._suggestion_popup.accept_selected()
+        self._last_partial = ''
+        if not text:
+            self._suggestion_popup.hide()
+            return
+        self._suggestion_popup.hide()
         try:
             cursor = self._editor.index("insert")
             lineno = int(cursor.split('.')[0])
@@ -724,15 +801,10 @@ class PedroApp(ctk.CTk):
                 word = m.group(1)
                 start_col = col - len(word)
                 self._editor.delete(f"{lineno}.{start_col}", cursor)
-            self._editor.insert(cursor, func_name + "()")
+            self._editor.insert(cursor, text)
             self._on_editor_change()
         except Exception:
             pass
-        return True
-
-    def _on_suggestion_click(self, event=None):
-        self._select_suggestion()
-        return "break"
 
     def _on_mouse_move(self, event=None):
         if self._tooltip_job:
@@ -754,19 +826,15 @@ class PedroApp(ctk.CTk):
             try:
                 lineno = int(str(index).split('.')[0])
                 line_text = self._editor.get(f"{lineno}.0", f"{lineno}.end").strip()
-                if any(fn in line_text for fn in PEDRO_FUNCTIONS) and '(' not in line_text:
+                if any(re.search(r'\b' + re.escape(fn) + r'\b', line_text) for fn in PEDRO_FUNCTIONS) and '(' not in line_text:
                     for fn in PEDRO_FUNCTIONS:
-                        if fn in line_text and f"{fn}(" not in line_text:
+                        if re.search(r'\b' + re.escape(fn) + r'\b', line_text) and f"{fn}(" not in line_text:
                             msg = f"Missing parentheses: use {fn}() to call the function"
                             break
                 if not msg:
-                    try:
-                        compile(self._editor.get("1.0", "end-1c"), '<editor>', 'exec')
-                    except SyntaxError as e:
-                        if e.lineno == lineno:
-                            msg = f"Syntax error: {e.msg}"
-                    except Exception:
-                        pass
+                    se = self._cached_syntax_error
+                    if se and se.lineno == lineno:
+                        msg = f"Syntax error: {se.msg}"
                 if not msg:
                     msg = "Code outside a function — wrap it in def"
             except Exception:
@@ -782,18 +850,8 @@ class PedroApp(ctk.CTk):
                     if m.start() <= col <= m.end():
                         words.append(m.group(1))
                 word = words[0] if words else ""
-                pedro_docs = {
-                    'move': 'Move Pedro forward one step.',
-                    'turn_left': 'Turn Pedro 90 degrees counter-clockwise.',
-                    'plant_flag': 'Plant a flag at the current position.',
-                    'pick_flag': 'Pick up a flag from the current position.',
-                    'front_is_clear': 'Return True if no wall is ahead.',
-                    'flag_present': 'Return True if a flag is at this position.',
-                    'facing_north': 'Return True if Pedro is facing north.',
-                    'facing_east': 'Return True if Pedro is facing east.',
-                }
-                if word in pedro_docs:
-                    msg = f"{word}() — {pedro_docs[word]}"
+                if word in PEDRO_DOCS:
+                    msg = f"{word}() — {PEDRO_DOCS[word]}"
                     fg, bg = "#B8D4B8", "#1A2A1A"
             except Exception:
                 pass
@@ -824,12 +882,6 @@ class PedroApp(ctk.CTk):
         if self._tooltip_job:
             self.after_cancel(self._tooltip_job)
             self._tooltip_job = None
-        if self._tooltip:
-            try:
-                self._tooltip.destroy()
-            except Exception:
-                pass
-            self._tooltip = None
         if hasattr(self, '_err_tip') and self._err_tip:
             try:
                 self._err_tip.destroy()
@@ -1001,6 +1053,7 @@ class PedroApp(ctk.CTk):
             self._set_status(f"Failed: {e}", "red")
 
     def _load_activity(self, name):
+        self._loaded_activity = name
         scaffold_path = SCAFFOLDS_DIR / f"{name}_starter.py"
         original_path = ORIGINAL_SCAFFOLDS_DIR / f"{name}_starter.py"
         world_name_map = {
@@ -1080,9 +1133,7 @@ class PedroApp(ctk.CTk):
     def _on_save(self, event=None):
         if self._current_file:
             try:
-                code = self._editor.get("1.0", "end-1c")
-                with open(self._current_file, 'w', encoding='utf-8') as f:
-                    f.write(code)
+                self._save_code_to_file(self._current_file)
                 self._set_status(f"Saved: {Path(self._current_file).name}", "green")
             except Exception as e:
                 self._set_status(f"Save failed: {e}", "red")
@@ -1093,9 +1144,7 @@ class PedroApp(ctk.CTk):
     def _on_close(self):
         if self._current_file:
             try:
-                code = self._editor.get("1.0", "end-1c")
-                with open(self._current_file, 'w', encoding='utf-8') as f:
-                    f.write(code)
+                self._save_code_to_file(self._current_file)
             except Exception:
                 pass
         self.destroy()
@@ -1110,7 +1159,7 @@ class PedroApp(ctk.CTk):
         if not filepath:
             return
         try:
-            code = self._editor.get("1.0", "end-1c")
+            code = self._editor_text
             with open(filepath, 'w', encoding='utf-8') as f:
                 f.write(code)
             self._current_file = filepath
@@ -1343,6 +1392,25 @@ class PedroApp(ctk.CTk):
         ctk.CTkButton(btn_frame, text="Clear Grid", width=80,
                        command=clear_grid,
                        fg_color="#555555", border_width=1).pack(side="left", padx=5)
+
+        def generate_maze_cb():
+            try:
+                nr = max(5, min(30, int(rows_entry.get())))
+                nc = max(5, min(40, int(cols_entry.get())))
+            except ValueError:
+                nr, nc = 11, 15
+            nonlocal grid, pedro_pos, pedro_dir
+            g, pr, pc, pd, gr, gc = generate_maze(nr, nc)
+            grid = g
+            pedro_pos = [pr, pc]
+            pedro_dir = pd
+            rows_entry.delete(0, "end"); rows_entry.insert(0, str(len(grid)))
+            cols_entry.delete(0, "end"); cols_entry.insert(0, str(len(grid[0])))
+            draw_grid()
+
+        ctk.CTkButton(btn_frame, text="Maze", width=70,
+                       command=generate_maze_cb,
+                       fg_color="#6A3A9A", border_width=1).pack(side="left", padx=5)
         ctk.CTkLabel(btn_frame, text="L-click: cycle cell   |   R-click: place Pedro",
                       font=("", 11)).pack(side="left", padx=15, pady=5)
         ctk.CTkButton(btn_frame, text="Load", width=70,
@@ -1371,7 +1439,7 @@ class PedroApp(ctk.CTk):
             self._set_status("Load a world first (Worlds menu)", "red")
             return
 
-        code = self._editor.get("1.0", "end-1c").strip()
+        code = self._editor_text.strip()
         if not code:
             self._set_status("Write some code first", "red")
             return
@@ -1399,7 +1467,11 @@ class PedroApp(ctk.CTk):
             output_file = os.path.join(tmpdir, "history.json")
 
             env = os.environ.copy()
-            env['PEDRO_WORLD'] = self._world_file
+            world_to_use = self._world_file
+            if self._loaded_activity == 'lunar_core':
+                world_to_use = self._randomize_pedro_start(self._world_file)
+                self._renderer.load_world(world_to_use)
+            env['PEDRO_WORLD'] = world_to_use
             env['PEDRO_OUTPUT'] = output_file
 
             try:
@@ -1425,11 +1497,16 @@ class PedroApp(ctk.CTk):
                 if os.path.exists(output_file):
                     try:
                         with open(output_file, 'r') as f:
-                            self._snapshots = json.load(f)
+                            data = json.load(f)
+                        if isinstance(data, list):
+                            self._snapshots = data
+                        else:
+                            self._snapshots = data.get('snapshots', [])
                         loaded = True
                     except Exception:
                         pass
                 if loaded and self._snapshots:
+                    self._snapshots = self._merge_turns(self._snapshots)
                     self._reset_replay(keep_snapshots=True)
                     friendly = self._friendly_error(err) if err else "Code stopped with an error."
                     self._set_status(f"{friendly} — showing {len(self._snapshots)} steps before crash", "orange")
@@ -1444,8 +1521,17 @@ class PedroApp(ctk.CTk):
 
             try:
                 with open(output_file, 'r') as f:
-                    self._snapshots = json.load(f)
-                    self._snapshots = self._merge_turns(self._snapshots)
+                    data = json.load(f)
+                if isinstance(data, list):
+                    self._snapshots = data
+                else:
+                    self._snapshots = data.get('snapshots', [])
+                    if data.get('base_error'):
+                        self._set_status(
+                            f"Base check failed: picked up {data['expected_flags']} flags "
+                            f"but only planted {data['planted_at_base']}", "red"
+                        )
+                self._snapshots = self._merge_turns(self._snapshots)
             except json.JSONDecodeError:
                 self._set_status("Failed to read execution history", "red")
                 return
@@ -1459,6 +1545,38 @@ class PedroApp(ctk.CTk):
                 f"Ran successfully — {len(self._snapshots)} steps recorded",
                 "green"
             )
+
+    def _randomize_pedro_start(self, world_path):
+        with open(world_path, 'r', encoding='utf-8') as f:
+            content = f.read()
+        raw_lines = [l for l in content.split('\n') if l.strip()]
+        rows = len(raw_lines)
+        cols = max(len(l) for l in raw_lines)
+        grid = [list(line.ljust(cols, '#')) for line in raw_lines]
+        dir_chars = {'>', '^', 'v', '<'}
+        old_pos = None
+        candidates = []
+        for r, row in enumerate(grid):
+            if r == 0 or r == rows - 1:
+                continue
+            for c, ch in enumerate(row):
+                if c == 0 or c == cols - 1:
+                    continue
+                if ch in dir_chars:
+                    old_pos = (r, c)
+                elif ch == '.':
+                    candidates.append((r, c))
+        if not candidates:
+            return world_path
+        new_pos = random.choice(candidates)
+        if old_pos:
+            grid[old_pos[0]][old_pos[1]] = '.'
+        grid[new_pos[0]][new_pos[1]] = '>'
+        output = '\n'.join(''.join(row) for row in grid)
+        out_path = str(WORLDS_DIR / '_random_lunar_core.txt')
+        with open(out_path, 'w', encoding='utf-8') as f:
+            f.write(output)
+        return out_path
 
     def _reset_replay(self, keep_snapshots=False):
         if not keep_snapshots:

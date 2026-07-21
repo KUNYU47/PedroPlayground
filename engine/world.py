@@ -12,6 +12,65 @@ DIRECTION_SYMBOLS = {
 }
 
 
+def generate_maze(rows, cols):
+    import random
+    from collections import deque
+
+    rows = max(5, rows)
+    cols = max(5, cols)
+    if rows % 2 == 0:
+        rows += 1
+    if cols % 2 == 0:
+        cols += 1
+
+    grid = [['#' for _ in range(cols)] for _ in range(rows)]
+
+    start_r, start_c = 1, 1
+    grid[start_r][start_c] = '.'
+    stack = [(start_r, start_c)]
+    visited = {(start_r, start_c)}
+    directions = [(-2, 0), (2, 0), (0, -2), (0, 2)]
+
+    while stack:
+        cr, cc = stack[-1]
+        random.shuffle(directions)
+        carved = False
+        for dr, dc in directions:
+            nr, nc = cr + dr, cc + dc
+            if 1 <= nr < rows - 1 and 1 <= nc < cols - 1 and (nr, nc) not in visited:
+                mr, mc = cr + dr // 2, cc + dc // 2
+                grid[mr][mc] = '.'
+                grid[nr][nc] = '.'
+                visited.add((nr, nc))
+                stack.append((nr, nc))
+                carved = True
+                break
+        if not carved:
+            stack.pop()
+
+    candidates = [(r, c) for r in range(1, rows - 1)
+                  for c in range(1, cols - 1) if grid[r][c] == '.']
+    pedro_pos = random.choice(candidates)
+
+    q = deque([pedro_pos])
+    dist = {pedro_pos: 0}
+    while q:
+        cr, cc = q.popleft()
+        for dr, dc in [(-1, 0), (1, 0), (0, -1), (0, 1)]:
+            nr, nc = cr + dr, cc + dc
+            if 0 <= nr < rows and 0 <= nc < cols and grid[nr][nc] == '.' and (nr, nc) not in dist:
+                dist[(nr, nc)] = dist[(cr, cc)] + 1
+                q.append((nr, nc))
+    goal_pos = max(dist, key=dist.get)
+
+    pr, pc = pedro_pos
+    gr, gc = goal_pos
+    grid[pr][pc] = '>'
+    grid[gr][gc] = 'F'
+
+    return grid, pr, pc, 1, gr, gc
+
+
 class World:
     def __init__(self, grid):
         self._grid = grid

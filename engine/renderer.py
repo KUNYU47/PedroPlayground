@@ -22,7 +22,6 @@ class GridRenderer:
         self._pedro_row = 0
         self._pedro_col = 0
         self._pedro_dir = 1
-        self._flags_carried = 0
         self._photo_refs = []
         self._pedro_image_id = None
 
@@ -32,17 +31,17 @@ class GridRenderer:
         self._pedro_row = sr
         self._pedro_col = sc
         self._pedro_dir = sd
-        self._flags_carried = 0
         self._photo_refs.clear()
         self._pedro_image_id = None
         self._draw_grid()
 
     def zoom_in(self):
-        self._cell_size += CELL_SIZE_STEP
-        self._reload()
+        if self._cell_size < CELL_SIZE_MAX:
+            self._cell_size += CELL_SIZE_STEP
+            self._reload()
 
     def zoom_out(self):
-        if self._cell_size > CELL_SIZE_STEP:
+        if self._cell_size > CELL_SIZE_MIN:
             self._cell_size -= CELL_SIZE_STEP
             self._reload()
 
@@ -70,7 +69,7 @@ class GridRenderer:
 
         canvas_w = cols * cs
         canvas_h = rows * cs
-        self._canvas.config(width=canvas_w, height=canvas_h)
+        self._canvas.configure(scrollregion=(0, 0, canvas_w, canvas_h))
 
         for r in range(rows):
             for c in range(cols):
@@ -113,14 +112,10 @@ class GridRenderer:
                                  fill="#666666", width=2)
 
     def _draw_pedro(self):
-        pil_img = self._sprites.get_pil_idle(self._pedro_dir, self._sprite_scale())
-        tk_img = self._pil_to_tk(pil_img)
-        x = self._pedro_col * self._cell_size + self._cell_size // 2
-        y = self._pedro_row * self._cell_size + self._cell_size // 2
-        new_id = self._canvas.create_image(x, y, image=tk_img, anchor="center")
-        if self._pedro_image_id:
-            self._canvas.delete(self._pedro_image_id)
-        self._pedro_image_id = new_id
+        self._draw_pedro_with_frame(
+            self._sprites.get_pil_idle(self._pedro_dir, self._sprite_scale()),
+            self._pedro_row, self._pedro_col
+        )
 
     def _draw_pedro_with_frame(self, pil_frame, row, col):
         tk_img = self._pil_to_tk(pil_frame)
@@ -136,7 +131,6 @@ class GridRenderer:
         self._pedro_row = snapshot['row']
         self._pedro_col = snapshot['col']
         self._pedro_dir = snapshot['direction']
-        self._flags_carried = snapshot.get('flags_carried', 0)
         self._draw_grid()
 
     def animate_action(self, snapshot, callback=None, fps=8):
