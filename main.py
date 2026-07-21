@@ -691,6 +691,8 @@ class PedroApp(ctk.CTk):
                                    'Shift_L', 'Shift_R', 'colon', 'bracketleft',
                                    'bracketright', 'parenleft', 'parenright'):
             return
+        if keysym and len(keysym) == 1 and not (keysym.isalnum() or keysym == '_'):
+            return
         self._show_autocomplete()
 
     def _update_cursor_pos(self, event=None):
@@ -763,6 +765,9 @@ class PedroApp(ctk.CTk):
             custom_funcs.add(match.group(1))
 
         all_funcs = PEDRO_FUNCTIONS | custom_funcs
+        if partial in all_funcs:
+            self._close_ac()
+            return
         matches = [f for f in sorted(all_funcs) if f.startswith(partial) and f != partial]
         if not matches:
             self._close_ac()
@@ -827,13 +832,17 @@ class PedroApp(ctk.CTk):
             pass
 
     def _highlight_ac_item(self):
-        if not hasattr(self, '_ac_labels') or not self._ac_labels:
+        if not self._ac_tip or not hasattr(self, '_ac_labels') or not self._ac_labels:
             return
         for i, lbl in enumerate(self._ac_labels):
-            if i == self._ac_index:
-                lbl.configure(fg_color="#3A3A3A", text_color="#FFFFFF")
-            else:
-                lbl.configure(fg_color="transparent", text_color="#D4D4D4")
+            try:
+                if i == self._ac_index:
+                    lbl.configure(fg_color="#3A3A3A", text_color="#FFFFFF")
+                else:
+                    lbl.configure(fg_color="transparent", text_color="#D4D4D4")
+            except Exception:
+                self._close_ac()
+                return
 
     def _close_ac(self):
         if self._ac_timeout:
@@ -859,12 +868,12 @@ class PedroApp(ctk.CTk):
             lineno = int(cursor.split('.')[0])
             col = int(cursor.split('.')[1])
             line_start = self._editor.get(f"{lineno}.0", cursor)
-            words = line_start.split()
-            if words:
-                last_word = words[-1]
-                start_col = col - len(last_word)
+            m = re.search(r'([a-zA-Z_]\w*)$', line_start)
+            if m:
+                word = m.group(1)
+                start_col = col - len(word)
                 self._editor.delete(f"{lineno}.{start_col}", cursor)
-                self._editor.insert(cursor, f"{func_name}()")
+            self._editor.insert(cursor, f"{func_name}()")
         except Exception:
             pass
         self._close_ac()
