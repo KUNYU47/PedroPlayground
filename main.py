@@ -369,6 +369,14 @@ class PedroApp(ctk.CTk):
         self._indent_guide.place(relwidth=1, relheight=1, x=6, y=0)
         self._editor.lift()
 
+        from tkinter import Listbox
+        self._suggestion_list = Listbox(editor_bg, font=font_spec,
+            bg="#2D2D2D", fg="#D4D4D4", selectbackground="#3A3A3A",
+            selectforeground="#FFFFFF", relief="flat", bd=1,
+            highlightthickness=0, activestyle="none", height=5)
+        self._suggestion_list.bind("<Button-1>", self._on_suggestion_click)
+        self._suggestion_list.bind("<Double-Button-1>", self._on_suggestion_click)
+
         editor_scroll = ctk.CTkScrollbar(editor_bg, orientation="vertical",
                                           command=self._on_scrollbar)
         editor_scroll.grid(row=0, column=1, sticky="ns")
@@ -382,9 +390,6 @@ class PedroApp(ctk.CTk):
 
         self._editor.bind("<Tab>", self._on_editor_tab)
         self._editor.bind("<KeyPress-Return>", self._on_return_press, add="+")
-        self._editor.bind("<KeyPress-Up>", lambda e: self._ac_key('up', e))
-        self._editor.bind("<KeyPress-Down>", lambda e: self._ac_key('down', e))
-        self._editor.bind("<KeyPress-Escape>", lambda e: self._ac_key('escape', e))
         self._editor.bind("<KeyRelease-Return>", self._on_return_release)
         self._editor.bind("<BackSpace>", self._on_editor_backspace)
         self._editor.bind("<Control-bracketleft>", self._on_editor_unindent)
@@ -394,6 +399,7 @@ class PedroApp(ctk.CTk):
         self._editor.bind("<Control-Z>", lambda e: self._editor.edit_undo())
         self._editor.bind("<Control-y>", lambda e: self._editor.edit_redo())
         self._editor.bind("<Control-Y>", lambda e: self._editor.edit_redo())
+        self._editor.bind("<Control-space>", self._show_suggestions)
         self._editor.bind("<KeyRelease>", self._on_key_up, add="+")
         self._editor.bind("<Motion>", self._on_mouse_move, add="+")
 
@@ -401,7 +407,6 @@ class PedroApp(ctk.CTk):
 
         self._tooltip = None
         self._tooltip_job = None
-        self._ac_tip = None
 
         self._line_numbers.bind("<MouseWheel>", lambda e: self._editor.yview_scroll(int(-1 * (e.delta / 120)), "units"))
         self._line_numbers.bind("<Button-4>", lambda e: self._editor.yview_scroll(-1, "units"))
@@ -649,235 +654,85 @@ class PedroApp(ctk.CTk):
         self._on_editor_change()
 
     def _on_return_press(self, event=None):
-        if self._ac_tip is not None:
-            if self._ac_matches and self._ac_index >= 0 and self._ac_index < len(self._ac_matches):
-                self._insert_autocomplete(self._ac_matches[self._ac_index], self._ac_tip)
-                return "break"
-            self._close_ac()
+        if self._select_suggestion():
+            return "break"
 
     def _on_editor_tab(self, event=None):
-        if self._ac_tip is not None:
-            if self._ac_matches and self._ac_index >= 0 and self._ac_index < len(self._ac_matches):
-                self._insert_autocomplete(self._ac_matches[self._ac_index], self._ac_tip)
-                return "break"
-            self._close_ac()
+        if self._select_suggestion():
+            return "break"
         self._editor.insert("insert", "    ")
         self._on_editor_change()
-        return "break"
-
-    def _ac_key(self, direction, event=None):
-        if not self._ac_tip:
-            return
-        if direction == 'escape':
-            self._close_ac()
-            return "break"
-        if direction == 'up':
-            self._ac_index = max(0, self._ac_index - 1)
-            self._highlight_ac_item()
-            return "break"
-        if direction == 'down':
-            self._ac_index = min(len(self._ac_matches) - 1, self._ac_index + 1)
-            self._highlight_ac_item()
-            return "break"
         return "break"
 
     def _on_key_up(self, event=None):
         self._update_cursor_pos()
         self._match_bracket()
-        keysym = event.keysym if hasattr(event, 'keysym') else ''
 
-        if keysym and keysym in ('Up', 'Down', 'Left', 'Right', 'Return', 'BackSpace',
-                                   'Escape', 'Tab', 'Control_L', 'Control_R',
-                                   'Shift_L', 'Shift_R', 'colon', 'bracketleft',
-                                   'bracketright', 'parenleft', 'parenright'):
-            return
-        if keysym and len(keysym) == 1 and not (keysym.isalnum() or keysym == '_'):
-            return
-        self._show_autocomplete()
-
-    def _update_cursor_pos(self, event=None):
-        try:
-            cursor = self._editor.index("insert")
-            line, col = cursor.split('.')
-            self._status_label.configure(text=f"Ln {line}, Col {int(col)+1}")
-        except Exception:
-            pass
-
-    def _match_bracket(self):
-        try:
-            self._editor.tag_remove('bracket_match', "1.0", "end")
-        except Exception:
-            pass
-        pairs = {'(': ')', ')': '(', '[': ']', ']': '[', '{': '}', '}': '{'}
-        try:
-            cursor = self._editor.index("insert")
-            ch_before = self._editor.get(f"{cursor} - 1 char", cursor)
-            ch_after = self._editor.get(cursor, f"{cursor} + 1 char")
-        except Exception:
-            return
-        ch = None
-        pos = cursor
-        if ch_before in pairs:
-            ch = ch_before
-            pos = f"{cursor} - 1 char"
-        elif ch_after in pairs:
-            ch = ch_after
-        if not ch:
-            return
-        target = pairs[ch]
-        direction = 1 if ch in '({[' else -1
-        depth, cur, steps = 0, pos, 0
-        while steps < 200:
-            steps += 1
-            try:
-                cur = self._editor.index(f"{cur} + {direction} char")
-                c = self._editor.get(cur, f"{cur} + 1 char")
-            except Exception:
-                return
-            if c == ch:
-                depth += 1
-            elif c == target:
-                if depth == 0:
-                    self._editor.tag_add('bracket_match', cur, f"{cur} + 1 char")
-                    self._editor.tag_add('bracket_match', pos, f"{pos} + 1 char")
-                    return
-                depth -= 1
-
-    def _show_autocomplete(self):
+    def _show_suggestions(self, event=None):
+        self._suggestion_list.delete(0, "end")
+        self._suggestion_list.place_forget()
         try:
             cursor = self._editor.index("insert")
             lineno = int(cursor.split('.')[0])
             col = int(cursor.split('.')[1])
-            line_start = self._editor.get(f"{lineno}.0", cursor)
+            line_text = self._editor.get(f"{lineno}.0", cursor)
         except Exception:
-            return
-        if not line_start or col < 2:
-            self._close_ac()
-            return
-        partial = line_start.split()[-1] if line_start.split() else ""
-        if not partial or len(partial) < 2:
-            self._close_ac()
-            return
-
+            return "break"
+        if col < 1:
+            return "break"
+        partial = line_text.split()[-1] if line_text.split() else ""
+        if not partial or len(partial) < 1:
+            return "break"
         custom_funcs = set()
         full_code = self._editor.get("1.0", "end-1c")
-        for match in re.finditer(r'def\s+([a-zA-Z_]\w*)\s*\(', full_code):
-            custom_funcs.add(match.group(1))
-
+        for m in re.finditer(r'def\s+([a-zA-Z_]\w*)\s*\(', full_code):
+            custom_funcs.add(m.group(1))
         all_funcs = PEDRO_FUNCTIONS | custom_funcs
-        if partial in all_funcs:
-            self._close_ac()
-            return
         matches = [f for f in sorted(all_funcs) if f.startswith(partial) and f != partial]
         if not matches:
-            self._close_ac()
-            return
-
-        self._ac_matches = matches
-        if not hasattr(self, '_ac_index') or self._ac_index >= len(matches):
-            self._ac_index = 0
-
-        same_matches = (hasattr(self, '_ac_prev_matches') and 
-                         self._ac_prev_matches == matches and 
-                         self._ac_tip is not None)
-        self._ac_prev_matches = matches
-
-        if same_matches:
-            self._highlight_ac_item()
-            if self._ac_timeout:
-                self.after_cancel(self._ac_timeout)
-            self._ac_timeout = self.after(3000, self._close_ac)
-            return
-
-        old_tip = self._ac_tip
-        self._ac_tip = None
-        if old_tip:
-            try:
-                old_tip.destroy()
-            except Exception:
-                try:
-                    old_tip.withdraw()
-                except Exception:
-                    pass
-
+            return "break"
+        for m in matches:
+            self._suggestion_list.insert("end", f"{m}()")
+        self._suggestion_list.selection_set(0)
         try:
             bbox = self._editor.bbox(cursor)
-            if not bbox:
-                return
-            x, y, _, h = bbox
-            x_root = self._editor.winfo_rootx() + x + 10
-            y_root = self._editor.winfo_rooty() + y + h + 2
-
-            tip = ctk.CTkToplevel(self)
-            tip.overrideredirect(True)
-            tip.geometry(f"+{x_root}+{y_root}")
-            tip.configure(fg_color="#2D2D2D")
-
-            self._ac_labels = []
-            for i, m in enumerate(matches):
-                lbl = ctk.CTkLabel(tip, text=f"{m}()", font=(EDITOR_FONT_FAMILY, self._font_size - 2),
-                                    text_color="#D4D4D4", anchor="w", padx=8, pady=2,
-                                    corner_radius=0)
-                lbl.pack(fill="x")
-                lbl.bind("<Button-1>", lambda e, fn=m: self._insert_autocomplete(fn, tip))
-                lbl.configure(cursor="hand2")
-                self._ac_labels.append(lbl)
-
-            self._ac_tip = tip
-            self._highlight_ac_item()
-            if self._ac_timeout:
-                self.after_cancel(self._ac_timeout)
-            self._ac_timeout = self.after(3000, self._close_ac)
+            if bbox:
+                x = bbox[0] + 10
+                y = bbox[1] + bbox[3] + 4
+                self._suggestion_list.place(x=x, y=y)
         except Exception:
             pass
+        return "break"
 
-    def _highlight_ac_item(self):
-        if not self._ac_tip or not hasattr(self, '_ac_labels') or not self._ac_labels:
-            return
-        for i, lbl in enumerate(self._ac_labels):
-            try:
-                if i == self._ac_index:
-                    lbl.configure(fg_color="#3A3A3A", text_color="#FFFFFF")
-                else:
-                    lbl.configure(fg_color="transparent", text_color="#D4D4D4")
-            except Exception:
-                self._close_ac()
-                return
-
-    def _close_ac(self):
-        if self._ac_timeout:
-            self.after_cancel(self._ac_timeout)
-            self._ac_timeout = None
-        if self._ac_tip:
-            try:
-                self._ac_tip.destroy()
-            except Exception:
-                try:
-                    self._ac_tip.withdraw()
-                except Exception:
-                    pass
-            self._ac_tip = None
-        self._ac_matches = []
-        self._ac_labels = []
-        self._ac_index = 0
-        self._ac_prev_matches = []
-
-    def _insert_autocomplete(self, func_name, tip):
+    def _select_suggestion(self):
+        if not self._suggestion_list.winfo_ismapped():
+            return False
+        sel = self._suggestion_list.curselection()
+        if not sel:
+            self._suggestion_list.place_forget()
+            return False
+        text = self._suggestion_list.get(sel[0])
+        func_name = text[:-2]
+        self._suggestion_list.place_forget()
         try:
             cursor = self._editor.index("insert")
             lineno = int(cursor.split('.')[0])
             col = int(cursor.split('.')[1])
-            line_start = self._editor.get(f"{lineno}.0", cursor)
-            m = re.search(r'([a-zA-Z_]\w*)$', line_start)
+            line_text = self._editor.get(f"{lineno}.0", cursor)
+            m = re.search(r'([a-zA-Z_]\w*)$', line_text)
             if m:
                 word = m.group(1)
                 start_col = col - len(word)
                 self._editor.delete(f"{lineno}.{start_col}", cursor)
-            self._editor.insert(cursor, f"{func_name}()")
+            self._editor.insert(cursor, func_name + "()")
+            self._on_editor_change()
         except Exception:
             pass
-        self._close_ac()
-        self._on_editor_change()
+        return True
+
+    def _on_suggestion_click(self, event=None):
+        self._select_suggestion()
+        return "break"
 
     def _on_mouse_move(self, event=None):
         if self._tooltip_job:
