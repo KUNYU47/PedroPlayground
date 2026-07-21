@@ -1,4 +1,4 @@
-from engine.world import parse_world, World, WALL, FLAG
+from engine.world import parse_world, World, WALL
 from engine.sprites import SpriteManager
 from PIL import ImageTk
 
@@ -38,12 +38,11 @@ class GridRenderer:
         self._draw_grid()
 
     def zoom_in(self):
-        if self._cell_size < CELL_SIZE_MAX:
-            self._cell_size += CELL_SIZE_STEP
-            self._reload()
+        self._cell_size += CELL_SIZE_STEP
+        self._reload()
 
     def zoom_out(self):
-        if self._cell_size > CELL_SIZE_MIN:
+        if self._cell_size > CELL_SIZE_STEP:
             self._cell_size -= CELL_SIZE_STEP
             self._reload()
 
@@ -84,8 +83,15 @@ class GridRenderer:
                 fill = WALL_COLOR if cell == WALL else EMPTY_COLOR
                 self._canvas.create_rectangle(x1, y1, x2, y2,
                                               fill=fill, outline=GRID_LINE_COLOR, width=1)
-                if cell == FLAG:
+                if cell >= 2:
                     self._draw_flag(c, r, cs)
+                    if cell > 2:
+                        cx = c * cs + cs//2
+                        cy = r * cs + cs//2 + 2
+                        count = cell - 1
+                        self._canvas.create_text(cx, cy, text=str(count),
+                                                  font=("", max(8, cs//3)),
+                                                  fill="#FFFFFF", anchor="center")
 
         self._draw_pedro()
 

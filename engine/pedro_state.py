@@ -69,6 +69,9 @@ class PedroState:
         self._flags += 1
         self._record('pick_flag')
 
+    def flag_present(self):
+        return self._world.is_flag(self._row, self._col)
+
     def front_is_clear(self):
         nr, nc = self._front_row_col()
         return not self._world.is_wall(nr, nc)

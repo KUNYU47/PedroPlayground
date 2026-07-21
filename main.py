@@ -273,12 +273,17 @@ class PedroApp(ctk.CTk):
                                     command=lambda: self._load_activity("flag_piles"))
         activities_menu.add_command(label="2026 Flags",
                                     command=lambda: self._load_activity("flag_planting"))
+        activities_menu.add_command(label="Lunar Core Sample",
+                                    command=lambda: self._load_activity("lunar_core"))
+        activities_menu.add_command(label="Maze Solver",
+                                    command=lambda: self._load_activity("maze"))
         activities_menu.add_separator()
         activities_menu.add_command(label="Save Code (Ctrl+S)", command=self._on_save)
         activities_menu.add_command(label="Save As...", command=self._save_as)
         activities_menu.add_command(label="Restore to Original", command=self._restore_original)
         activities_menu.add_separator()
         activities_menu.add_command(label="Clear Editor", command=self._clear_editor)
+        activities_menu.add_command(label="Open File...", command=self._open_file)
         menubar.add_cascade(label="Activities", menu=activities_menu)
 
         worlds_menu = Menu(menubar, tearoff=0, font=menu_font)
@@ -1113,6 +1118,8 @@ class PedroApp(ctk.CTk):
             "roomba": "roomba_3x3.txt",
             "flag_piles": "flag_piles.txt",
             "flag_planting": "flag_planting.txt",
+            "lunar_core": "lunar_core_3.txt",
+            "maze": "maze_small.txt",
         }
         world_name = world_name_map.get(name, "")
         world_path = WORLDS_DIR / world_name if world_name else None
@@ -1143,6 +1150,26 @@ class PedroApp(ctk.CTk):
         self._current_file = None
         self._original_code = ""
         self._set_status("Editor cleared")
+
+    def _open_file(self):
+        filepath = filedialog.askopenfilename(
+            parent=self,
+            filetypes=[("Python files", "*.py"), ("All files", "*.*")],
+            title="Open Python File"
+        )
+        if not filepath:
+            return
+        try:
+            code = Path(filepath).read_text(encoding="utf-8")
+            self._current_file = str(filepath)
+            self._original_code = ""
+            self._editor.delete("1.0", "end")
+            self._editor.insert("1.0", code)
+            self._rebuild_line_numbers()
+            self._highlight_debounce()
+            self._set_status(f"Opened: {Path(filepath).name}")
+        except Exception as e:
+            self._set_status(f"Failed to open: {e}", "red")
 
     def _restore_original(self):
         if not self._current_file or not self._original_code:
@@ -1437,7 +1464,7 @@ class PedroApp(ctk.CTk):
         draw_grid()
 
     def _change_font(self, delta):
-        new = max(10, min(24, self._font_size + delta))
+        new = max(6, self._font_size + delta)
         self._font_size = new
         font_spec = (EDITOR_FONT_FAMILY, new)
         self._editor.configure(font=font_spec,
