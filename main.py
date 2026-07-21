@@ -396,7 +396,7 @@ class PedroApp(ctk.CTk):
         self._editor.bind("<Control-Y>", lambda e: self._editor.edit_redo())
         self._editor.bind("<KeyRelease>", self._on_key_up, add="+")
         self._editor.bind("<Motion>", self._on_mouse_move, add="+")
-        self._editor.bind("<Leave>", lambda e: self._hide_tooltip())
+        self._editor.bind("<Button-1>", self._on_editor_click, add="+")
 
         self.bind_all("<F5>", lambda e: self._run_code())
 
@@ -783,7 +783,6 @@ class PedroApp(ctk.CTk):
                     self._ac_tip.destroy()
                 except Exception:
                     pass
-                self._ac_tip = None
 
             tip = ctk.CTkToplevel(self)
             tip.overrideredirect(True)
@@ -803,6 +802,9 @@ class PedroApp(ctk.CTk):
 
             self._ac_tip = tip
             self._highlight_ac_item()
+            if self._ac_timeout:
+                self.after_cancel(self._ac_timeout)
+            self._ac_timeout = self.after(5000, self._close_ac)
         except Exception:
             pass
 
@@ -816,6 +818,9 @@ class PedroApp(ctk.CTk):
                 lbl.configure(fg_color="transparent", text_color="#D4D4D4")
 
     def _close_ac(self):
+        if self._ac_timeout:
+            self.after_cancel(self._ac_timeout)
+            self._ac_timeout = None
         if self._ac_tip:
             try:
                 self._ac_tip.destroy()
@@ -947,6 +952,16 @@ class PedroApp(ctk.CTk):
             self._err_tip = None
 
     def _highlight_current_line(self):
+        try:
+            self._editor.tag_remove('current_line', "1.0", "end")
+            lineno = int(self._editor.index("insert").split('.')[0])
+            self._editor.tag_add('current_line', f"{lineno}.0", f"{lineno}.end")
+        except Exception:
+            pass
+
+    def _on_editor_click(self, event=None):
+        if self._ac_tip:
+            self._close_ac()
         try:
             self._editor.tag_remove('current_line', "1.0", "end")
             lineno = int(self._editor.index("insert").split('.')[0])

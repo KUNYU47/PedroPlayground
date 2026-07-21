@@ -20,6 +20,12 @@ def turn_right() -> None:
     """
     # TODO: 3 turn_left() calls
 
+def turn_around() -> None:
+    """
+    Turn Pedro 180 degrees around (two left turns).
+    """
+    # TODO: 2 turn_left() calls
+
 def collect_and_count() -> int:
     """
     Pick up all flags at Pedro's current position and return
@@ -32,29 +38,38 @@ def collect_and_count() -> int:
     # TODO: while flag_present(): pick_flag(), count += 1
     # TODO: return count
 
-def navigate_to_pile() -> None:
+def navigate_to_top_left() -> None:
     """
-    Navigate Pedro to the top-left corner where the flag pile is.
+    Navigate Pedro to the top-left corner of the world.
     Pre: Pedro is somewhere in the world, facing east.
-    Post: Pedro is at the top-left corner.
+    Post: Pedro is at the top-left corner, facing east.
 
-    >>> navigate_to_pile()
-    >>> # Pedro is now at the top-left corner
+    >>> navigate_to_top_left()
+    >>> # Pedro is at the top-left corner
     """
-    # TODO: turn_left to face north, walk to the top wall
-    # TODO: turn_left to face west, walk to the left wall
+    # TODO: turn_around, walk to left wall, turn right, walk to top wall, turn right
+
+def navigate_to_flag() -> None:
+    """
+    Walk east until Pedro finds the flag pile.
+    Pre: Pedro is at the top-left corner, facing east.
+    Post: Pedro is on the flag pile.
+
+    >>> navigate_to_flag()
+    >>> # Pedro is at the flag pile
+    """
+    # TODO: while no flag present, move forward
 
 def navigate_to_base() -> None:
     """
     Navigate Pedro to the bottom-right corner where the base is.
-    Pre: Pedro is somewhere in the world.
+    Pre: Pedro is at the flag pile, facing east.
     Post: Pedro is at the bottom-right corner.
 
     >>> navigate_to_base()
-    >>> # Pedro is now at the bottom-right corner
+    >>> # Pedro is at the base
     """
-    # TODO: turn_right to face down, walk to the bottom wall
-    # TODO: turn_right to face right, walk to the right wall
+    # TODO: walk to right wall, turn right, walk to bottom wall
 
 def plant_flags(amount: int) -> None:
     """
@@ -71,7 +86,8 @@ def main() -> None:
     lunar core samples, then navigate to the research station
     and plant the samples there.
     """
-    navigate_to_pile()
+    navigate_to_top_left()
+    navigate_to_flag()
     total_samples = collect_and_count()
     navigate_to_base()
     plant_flags(total_samples)
