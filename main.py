@@ -396,7 +396,6 @@ class PedroApp(ctk.CTk):
         self._editor.bind("<Control-Y>", lambda e: self._editor.edit_redo())
         self._editor.bind("<KeyRelease>", self._on_key_up, add="+")
         self._editor.bind("<Motion>", self._on_mouse_move, add="+")
-        self._editor.bind("<Button-1>", self._on_editor_click, add="+")
 
         self.bind_all("<F5>", lambda e: self._run_code())
 
@@ -651,15 +650,17 @@ class PedroApp(ctk.CTk):
 
     def _on_return_press(self, event=None):
         if self._ac_tip is not None:
-            if self._ac_matches and self._ac_index >= 0:
+            if self._ac_matches and self._ac_index >= 0 and self._ac_index < len(self._ac_matches):
                 self._insert_autocomplete(self._ac_matches[self._ac_index], self._ac_tip)
-            return "break"
+                return "break"
+            self._close_ac()
 
     def _on_editor_tab(self, event=None):
         if self._ac_tip is not None:
-            if self._ac_matches and self._ac_index >= 0:
+            if self._ac_matches and self._ac_index >= 0 and self._ac_index < len(self._ac_matches):
                 self._insert_autocomplete(self._ac_matches[self._ac_index], self._ac_tip)
-            return "break"
+                return "break"
+            self._close_ac()
         self._editor.insert("insert", "    ")
         self._on_editor_change()
         return "break"
@@ -687,7 +688,8 @@ class PedroApp(ctk.CTk):
 
         if keysym and keysym in ('Up', 'Down', 'Left', 'Right', 'Return', 'BackSpace',
                                    'Escape', 'Tab', 'Control_L', 'Control_R',
-                                   'Shift_L', 'Shift_R'):
+                                   'Shift_L', 'Shift_R', 'colon', 'bracketleft',
+                                   'bracketright', 'parenleft', 'parenright'):
             return
         self._show_autocomplete()
 
@@ -770,6 +772,29 @@ class PedroApp(ctk.CTk):
         if not hasattr(self, '_ac_index') or self._ac_index >= len(matches):
             self._ac_index = 0
 
+        same_matches = (hasattr(self, '_ac_prev_matches') and 
+                         self._ac_prev_matches == matches and 
+                         self._ac_tip is not None)
+        self._ac_prev_matches = matches
+
+        if same_matches:
+            self._highlight_ac_item()
+            if self._ac_timeout:
+                self.after_cancel(self._ac_timeout)
+            self._ac_timeout = self.after(3000, self._close_ac)
+            return
+
+        old_tip = self._ac_tip
+        self._ac_tip = None
+        if old_tip:
+            try:
+                old_tip.destroy()
+            except Exception:
+                try:
+                    old_tip.withdraw()
+                except Exception:
+                    pass
+
         try:
             bbox = self._editor.bbox(cursor)
             if not bbox:
@@ -778,16 +803,9 @@ class PedroApp(ctk.CTk):
             x_root = self._editor.winfo_rootx() + x + 10
             y_root = self._editor.winfo_rooty() + y + h + 2
 
-            if self._ac_tip:
-                try:
-                    self._ac_tip.destroy()
-                except Exception:
-                    pass
-
             tip = ctk.CTkToplevel(self)
             tip.overrideredirect(True)
             tip.geometry(f"+{x_root}+{y_root}")
-            tip.attributes("-topmost", True)
             tip.configure(fg_color="#2D2D2D")
 
             self._ac_labels = []
@@ -804,7 +822,7 @@ class PedroApp(ctk.CTk):
             self._highlight_ac_item()
             if self._ac_timeout:
                 self.after_cancel(self._ac_timeout)
-            self._ac_timeout = self.after(5000, self._close_ac)
+            self._ac_timeout = self.after(3000, self._close_ac)
         except Exception:
             pass
 
@@ -825,11 +843,15 @@ class PedroApp(ctk.CTk):
             try:
                 self._ac_tip.destroy()
             except Exception:
-                pass
+                try:
+                    self._ac_tip.withdraw()
+                except Exception:
+                    pass
             self._ac_tip = None
         self._ac_matches = []
         self._ac_labels = []
         self._ac_index = 0
+        self._ac_prev_matches = []
 
     def _insert_autocomplete(self, func_name, tip):
         try:
@@ -952,16 +974,6 @@ class PedroApp(ctk.CTk):
             self._err_tip = None
 
     def _highlight_current_line(self):
-        try:
-            self._editor.tag_remove('current_line', "1.0", "end")
-            lineno = int(self._editor.index("insert").split('.')[0])
-            self._editor.tag_add('current_line', f"{lineno}.0", f"{lineno}.end")
-        except Exception:
-            pass
-
-    def _on_editor_click(self, event=None):
-        if self._ac_tip:
-            self._close_ac()
         try:
             self._editor.tag_remove('current_line', "1.0", "end")
             lineno = int(self._editor.index("insert").split('.')[0])
