@@ -1118,7 +1118,7 @@ class PedroApp(ctk.CTk):
             "roomba": "roomba_3x3.txt",
             "flag_piles": "flag_piles.txt",
             "flag_planting": "flag_planting.txt",
-            "lunar_core": "lunar_core_3.txt",
+            "lunar_core": "lunar_core_a.txt",
             "maze": "maze_small.txt",
         }
         world_name = world_name_map.get(name, "")
