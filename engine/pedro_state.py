@@ -92,7 +92,7 @@ class PedroState:
         nr, nc = self._front_row_col()
         return not self._world.is_wall(nr, nc)
 
-    def flag_present(self):
+    def facing_north(self):
         return self._dir == 0
 
     def facing_east(self):
