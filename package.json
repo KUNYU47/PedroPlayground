@@ -1,0 +1,32 @@
+{
+  "name": "pedro-playground",
+  "private": true,
+  "version": "2.0.0",
+  "type": "module",
+  "description": "Pedro Playground — a visual Python learning environment for kids, running entirely in the browser.",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc -b && vite build",
+    "preview": "vite preview",
+    "start": "python3 launch.py",
+    "test": "vitest run",
+    "test:e2e": "node e2e/smoke.mjs && node e2e/stability.mjs && node e2e/files.mjs"
+  },
+  "dependencies": {
+    "monaco-editor": "^0.52.2",
+    "pyodide": "^0.27.5",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1"
+  },
+  "devDependencies": {
+    "@types/node": "^26.1.2",
+    "@types/react": "^18.3.12",
+    "@types/react-dom": "^18.3.1",
+    "@vitejs/plugin-react": "^4.3.4",
+    "playwright-core": "^1.62.0",
+    "typescript": "~5.6.3",
+    "vite": "^6.0.7",
+    "vite-plugin-static-copy": "^2.2.0",
+    "vitest": "^2.1.8"
+  }
+}

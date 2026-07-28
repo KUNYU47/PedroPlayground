@@ -1,9 +1,16 @@
-.venv/
+# Node / build
+node_modules/
+dist/
+
+# Python (legacy & launcher)
 __pycache__/
 *.pyc
-*.pyo
 build/
-dist/
-PedroPlayground.exe
-*.app
 *.spec.bak
+
+# OS / editors
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+e2e/shots/
