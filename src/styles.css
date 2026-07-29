@@ -93,9 +93,11 @@ select, .text-input {
   font: inherit;
   font-weight: 600;
   outline: none;
-  cursor: pointer;
   transition: border-color 0.15s, box-shadow 0.15s;
 }
+
+select { cursor: pointer; }
+.text-input { cursor: text; }
 
 select:hover, .text-input:hover { border-color: var(--accent); }
 select:focus, .text-input:focus { box-shadow: 0 0 0 2px rgba(125, 211, 252, 0.25); }
@@ -143,7 +145,7 @@ select:focus, .text-input:focus { box-shadow: 0 0 0 2px rgba(125, 211, 252, 0.25
   min-height: 0;
 }
 
-.editor-pane { flex: 0 0 auto; }
+.editor-pane { flex: 0 0 auto; position: relative; }
 .stage-pane { flex: 1; }
 
 .pane-title {
@@ -218,8 +220,6 @@ select:focus, .text-input:focus { box-shadow: 0 0 0 2px rgba(125, 211, 252, 0.25
 }
 
 /* editor pane file actions + drag & drop */
-.editor-pane { position: relative; }
-
 .editor-pane.drag-over::after {
   content: '';
   position: absolute;
@@ -588,6 +588,7 @@ select:focus, .text-input:focus { box-shadow: 0 0 0 2px rgba(125, 211, 252, 0.25
   min-width: 26px;
   border: 1px solid rgba(148, 163, 184, 0.35); /* keep every cell clearly outlined */
   border-radius: 4px;
+  font: inherit;
   font-size: 13px;
   cursor: pointer;
   display: flex;

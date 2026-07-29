@@ -29,14 +29,11 @@ const DEFAULT_CODE = 'from pedro import *\n\n\ndef main():\n    # Write your cod
 
 export default function App() {
   const editorRef = useRef<EditorPaneHandle>(null);
-  const runnerRef = useRef<RunnerClient | null>(null);
-  if (!runnerRef.current) {
-    runnerRef.current = new RunnerClient((ready) => {
-      setEngineReady(ready);
-      setPhase((p) => (p === 'booting' && ready ? 'ready' : p));
-    });
-  }
-  const runner = runnerRef.current;
+  // Lazy-init once (no render-body side effects); disposed on unmount below.
+  const [runner] = useState(() => new RunnerClient((ready) => {
+    setEngineReady(ready);
+    setPhase((p) => (p === 'booting' && ready ? 'ready' : p));
+  }));
 
   const [mission, setMission] = useState<Mission>(MISSIONS[0]);
   const [worldName, setWorldName] = useState<string>(MISSIONS[0].world);
@@ -52,7 +49,7 @@ export default function App() {
   const [phase, setPhase] = useState<Phase>('booting');
   const [engineReady, setEngineReady] = useState(false);
   const [status, setStatus] = useState<{ text: string; tone: Tone }>({ text: 'Starting the Python engine…', tone: 'info' });
-  const [stdout, setStdout] = useState<string[]>([]);
+  const [stdout, setStdout] = useState<Array<{ id: number; text: string }>>([]);
   const [customWorlds, setCustomWorlds] = useState<CustomWorld[]>(() => loadCustomWorlds());
   // Worlds from the user-editable worlds/ folder (launch.py); empty when
   // the app is served statically without the launcher.
@@ -70,6 +67,11 @@ export default function App() {
   const codeRef = useRef(DEFAULT_CODE);
   const missionRef = useRef(mission);
   missionRef.current = mission;
+  // Guards against async races: stale mission loads / run results are dropped.
+  const missionSeqRef = useRef(0);
+  const runningRef = useRef(false);
+  const stdoutIdRef = useRef(0);
+  const consoleRef = useRef<HTMLDivElement>(null);
 
   const speedMs = Math.round(1100 * Math.pow(60 / 1100, speedPct / 100));
 
@@ -105,6 +107,19 @@ export default function App() {
   }, [applyWorld]);
 
   const loadMission = useCallback(async (m: Mission) => {
+    const seq = ++missionSeqRef.current;
+    // Cancel any in-flight run so its (stale) results can't clobber the new
+    // mission's stage when it finishes.
+    runner.cancelRun();
+    runningRef.current = false;
+    window.clearTimeout(lintTimerRef.current);
+    // Flush the previous mission's pending autosave (to ITS key) before
+    // switching — dropping it would silently lose the last keystrokes.
+    if (saveTimerRef.current) {
+      window.clearTimeout(saveTimerRef.current);
+      saveTimerRef.current = 0;
+      saveCode(missionRef.current.id, codeRef.current);
+    }
     setPlaying(false);
     editorRef.current?.setErrorLine(null);
     editorRef.current?.setActiveLine(null);
@@ -113,15 +128,24 @@ export default function App() {
     try {
       const saved = loadSavedCode(m.id);
       const scaffold = saved ?? (await fetchScaffold(m.scaffold).catch(() => DEFAULT_CODE));
+      const custom = customWorlds.find((w) => w.name === m.world);
+      const text = custom ? custom.text : await fetchWorld(m.world).catch(() => null);
+      if (seq !== missionSeqRef.current) return; // a newer mission load won
       codeRef.current = scaffold;
       editorRef.current?.setValue(scaffold);
       setWorldName(m.world);
-      await loadWorldByName(m.world, customWorlds);
-      setStatus({ text: `${m.emoji} ${m.title} — ${m.description}`, tone: 'info' });
+      if (text != null) {
+        if (applyWorld(text)) {
+          setStatus({ text: `${m.emoji} ${m.title} — ${m.description}`, tone: 'info' });
+        }
+      } else {
+        setStatus({ text: `Could not load world: ${m.world}`, tone: 'error' });
+      }
     } catch (e) {
+      if (seq !== missionSeqRef.current) return;
       setStatus({ text: `Could not load mission: ${e instanceof Error ? e.message : e}`, tone: 'error' });
     }
-  }, [customWorlds, loadWorldByName]);
+  }, [customWorlds, applyWorld, runner]);
 
   // initial load + warm up the Python engine in the background
   useEffect(() => {
@@ -131,12 +155,24 @@ export default function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // Teardown: terminate the worker and flush pending debounce timers.
+  useEffect(() => {
+    return () => {
+      runner.dispose();
+      window.clearTimeout(lintTimerRef.current);
+      window.clearTimeout(saveTimerRef.current);
+    };
+  }, [runner]);
+
   /* ---------------------------- lint pipeline ---------------------------- */
 
   const runLint = useCallback((code: string) => {
     const heuristics = heuristicDiagnostics(code);
     editorRef.current?.setDiagnostics(heuristics);
     void runner.lint(code).then((errors) => {
+      // Stale lint (code changed since it was issued) must not overwrite
+      // newer diagnostics.
+      if (codeRef.current !== code) return;
       const pyDiags: Diagnostic[] = errors.map((e) => ({
         line: e.line,
         col: e.offset,
@@ -153,7 +189,14 @@ export default function App() {
     window.clearTimeout(lintTimerRef.current);
     lintTimerRef.current = window.setTimeout(() => runLint(code), 700);
     window.clearTimeout(saveTimerRef.current);
-    saveTimerRef.current = window.setTimeout(() => saveCode(missionRef.current.id, code), 800);
+    // Capture the mission id NOW — by the time the debounce fires the user
+    // may have switched missions, and the code must not land under the new
+    // mission's storage key.
+    const missionId = missionRef.current.id;
+    saveTimerRef.current = window.setTimeout(() => {
+      saveTimerRef.current = 0;
+      saveCode(missionId, code);
+    }, 800);
   }, [runLint]);
 
   /* ------------------------------ run control ---------------------------- */
@@ -205,7 +248,9 @@ export default function App() {
   }, []);
 
   const handleRun = useCallback(async () => {
-    if (phase === 'running') {
+    // Synchronous guard via ref: the `phase` state may lag a render behind,
+    // so rapid double-clicks / repeated F5 must not start two runs.
+    if (runningRef.current) {
       runner.cancelRun();
       return;
     }
@@ -227,19 +272,24 @@ export default function App() {
       setWorldVersion((v) => v + 1);
     }
 
+    runningRef.current = true;
     setPhase('running');
     setPlaying(false);
     setTargetStep(-1);
     setDisplayStep(-1);
     setStatus({ text: engineReady ? 'Running…' : 'Waking up the Python engine (first run takes a few seconds)…', tone: 'info' });
 
+    const seq = missionSeqRef.current;
     const outcome = await runner.run(codeRef.current, text, {
       onSnapshot: (snap) => {
         snapshotsRef.current.push(snap);
         setRunProgress(snapshotsRef.current.length);
       },
-      onStdout: (t) => setStdout((old) => [...old.slice(-199), t]),
+      onStdout: (t) => setStdout((old) => [...old.slice(-199), { id: ++stdoutIdRef.current, text: t }]),
     });
+    runningRef.current = false;
+    // The mission was switched mid-run — the new mission owns the stage now.
+    if (seq !== missionSeqRef.current) return;
     finishRun(outcome, data);
   }, [phase, worldText, worldData, mission, engineReady, runner, finishRun]);
 
@@ -293,6 +343,10 @@ export default function App() {
     if (!window.confirm(`Reset "${mission.title}" to its starting code and world? Your code for this mission will be replaced.`)) {
       return;
     }
+    // Drop any pending autosave first — Reset intentionally discards the
+    // code, so it must not be flushed back by loadMission.
+    window.clearTimeout(saveTimerRef.current);
+    saveTimerRef.current = 0;
     try {
       localStorage.removeItem('pedro.v2.code.' + mission.id);
     } catch { /* ignore */ }
@@ -308,7 +362,8 @@ export default function App() {
     a.href = url;
     a.download = `${mission.id}.py`;
     a.click();
-    URL.revokeObjectURL(url);
+    // Async revoke: Firefox can cancel the download if revoked synchronously.
+    setTimeout(() => URL.revokeObjectURL(url), 0);
     setStatus({ text: `Saved ${mission.id}.py 💾`, tone: 'ok' });
   }, [mission]);
 
@@ -352,17 +407,23 @@ export default function App() {
     setDisplayStep(step);
   }, [replay, replayLen]);
 
-  // Global F5 shortcut.
+  // Global F5 shortcut (ignored while a dialog is open).
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.key === 'F5') {
         e.preventDefault();
-        void handleRun();
+        if (!editorOpen && !helpOpen) void handleRun();
       }
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [handleRun]);
+  }, [handleRun, editorOpen, helpOpen]);
+
+  // Keep the console pinned to the latest line of output.
+  useEffect(() => {
+    const el = consoleRef.current;
+    if (el) el.scrollTop = el.scrollHeight;
+  }, [stdout]);
 
   const flagsCarried = useMemo(() => {
     if (!replay) return 0;
@@ -376,7 +437,8 @@ export default function App() {
     e.preventDefault();
     const startX = e.clientX;
     const startPct = splitPct;
-    const total = splitRef.current?.parentElement?.clientWidth ?? 1;
+    // splitRef is the <main> element itself — measure it, not its parent.
+    const total = splitRef.current?.clientWidth ?? 1;
     const move = (ev: PointerEvent) => {
       const delta = ((ev.clientX - startX) / total) * 100;
       setSplitPct(Math.min(70, Math.max(25, startPct + delta)));
@@ -384,9 +446,11 @@ export default function App() {
     const up = () => {
       window.removeEventListener('pointermove', move);
       window.removeEventListener('pointerup', up);
+      window.removeEventListener('pointercancel', up);
     };
     window.addEventListener('pointermove', move);
     window.addEventListener('pointerup', up);
+    window.addEventListener('pointercancel', up);
   };
 
   const running = phase === 'running';
@@ -460,7 +524,11 @@ export default function App() {
           className={`pane editor-pane ${dragOver ? 'drag-over' : ''}`}
           style={{ width: `${splitPct}%` }}
           onDragOver={(e) => { e.preventDefault(); setDragOver(true); }}
-          onDragLeave={() => setDragOver(false)}
+          onDragLeave={(e) => {
+            // Only clear when the pointer truly leaves the pane (not when it
+            // moves between child elements) to avoid overlay flicker.
+            if (!e.currentTarget.contains(e.relatedTarget as Node | null)) setDragOver(false);
+          }}
           onDrop={handleDrop}
         >
           <div className="pane-title">
@@ -482,10 +550,10 @@ export default function App() {
             }}
           />
           {dragOver && <div className="drop-overlay">📥 Drop your .py file here!</div>}
-          <div className="console">
+          <div className="console" ref={consoleRef}>
             {stdout.length === 0
               ? <span className="console-empty">print() output shows up here…</span>
-              : stdout.map((line, i) => <div key={i} className="console-line">{line}</div>)}
+              : stdout.map((line) => <div key={line.id} className="console-line">{line.text}</div>)}
           </div>
         </section>
 
@@ -549,7 +617,7 @@ export default function App() {
             />
           </div>
 
-          <footer className={`status-bar tone-${status.tone}`}>
+          <footer className={`status-bar tone-${status.tone}`} role="status" aria-live="polite">
             <span className="status-text">{status.text}</span>
             <span className="status-meta">
               <span className="badge">🚩 {flagsCarried} carried</span>

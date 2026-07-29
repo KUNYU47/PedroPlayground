@@ -1,7 +1,10 @@
 /**
  * Replay model: reconstructs world state at any step from the initial world
- * plus the diff-based snapshot stream. Grids are cached so scrubbing the
- * timeline backwards is cheap.
+ * plus the diff-based snapshot stream. Full grids are cached only at sparse
+ * checkpoints (every CHECKPOINT_INTERVAL steps) so scrubbing backwards stays
+ * cheap while memory stays bounded — caching every step would need hundreds
+ * of MB on a step-capped (50k) program.
+ * Note: returned grids are shared cache references — treat them as read-only.
  */
 import { Snapshot, WorldData } from './types';
 
@@ -13,6 +16,8 @@ export interface ReplayState {
   flagsCarried: number;
   line: number | null;
 }
+
+const CHECKPOINT_INTERVAL = 64;
 
 export class Replay {
   readonly world: WorldData;
@@ -56,7 +61,8 @@ export class Replay {
   private gridAt(index: number): number[][] {
     const cached = this.gridCache.get(index);
     if (cached) return cached;
-    // Walk back to the nearest cached grid, then apply diffs forward.
+    // Walk back to the nearest checkpoint, then apply diffs forward,
+    // materializing a checkpoint every CHECKPOINT_INTERVAL steps.
     let base = index - 1;
     while (base >= -1 && !this.gridCache.has(base)) base--;
     const grid = this.gridCache.get(base)!.map((r) => r.slice());
@@ -64,7 +70,9 @@ export class Replay {
       for (const [r, c, v] of this.snapshots[i].changes) {
         grid[r][c] = v;
       }
-      this.gridCache.set(i, grid.map((r) => r.slice()));
+      if ((i + 1) % CHECKPOINT_INTERVAL === 0) {
+        this.gridCache.set(i, grid.map((r) => r.slice()));
+      }
     }
     return grid;
   }

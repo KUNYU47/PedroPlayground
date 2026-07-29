@@ -40,6 +40,7 @@ await setCode('from pedro import *\n\nwhile True:\n    pass\n');
 await page.click('.run-btn');
 await page.waitForFunction(
   () => document.querySelector('.status-text')?.textContent?.includes('too long'),
+  null,
   { timeout: 30000 },
 );
 check('infinite loop → hard timeout', true, (await page.textContent('.status-text')).slice(0, 60));
@@ -48,6 +49,7 @@ await setCode('from pedro import *\n\nturn_left()\n');
 await page.click('.run-btn');
 await page.waitForFunction(
   () => document.querySelector('.status-text')?.textContent?.includes('Great job'),
+  null,
   { timeout: 30000 },
 );
 check('engine respawns and runs again', true);
@@ -57,6 +59,7 @@ await setCode('from pedro import *\n\nwhile True:\n    turn_left()\n');
 await page.click('.run-btn');
 await page.waitForFunction(
   () => document.querySelector('.status-text')?.textContent?.includes('infinite loop'),
+  null,
   { timeout: 30000 },
 );
 check('step cap → friendly message + partial replay', true, (await page.textContent('.status-text')).slice(0, 60));

@@ -1,6 +1,6 @@
 /**
- * Monaco bootstrap: lean editor.api build (no unused languages), Python
- * syntax support, a custom "Pedro Dark" theme matching the space UI, and
+ * Monaco bootstrap: full editor feature set (editor.all), Python-only
+ * language support, a custom "Pedro Dark" theme matching the space UI, and
  * kid-friendly editor defaults with modern IDE affordances (sticky scroll,
  * bracket colorization, smooth caret, inline suggestions UI).
  */

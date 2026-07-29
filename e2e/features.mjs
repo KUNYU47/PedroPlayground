@@ -33,6 +33,7 @@ page.on('console', (m) => { if (m.type() === 'error') errors.push(`console: ${m.
 
 await page.goto(URL, { waitUntil: 'domcontentloaded' });
 await page.waitForSelector('.editor-container .monaco-editor', { timeout: 30000 });
+await page.waitForSelector('.engine-pill.ready', { timeout: 90000 });
 
 /* ---------- World Editor: reset + resize ---------- */
 await page.click('text=World Editor');
@@ -121,6 +122,49 @@ const suggestVisible = await page.evaluate(
   () => !!document.querySelector('.suggest-widget.visible'),
 );
 check('no suggestion popup on "("', !suggestVisible);
+
+/* ---------- Stability: autosave must never land on the wrong mission ---------- */
+await page.evaluate(() => window.__pedroEditor.setValue('from pedro import *\n# UNIQUE_MARKER_A\n'));
+// Switch missions within the 800ms autosave debounce window.
+await page.selectOption('.header-field select', 'roomba');
+await page.waitForTimeout(1200); // let the (flushed) save + load settle
+const leaked = await page.evaluate(
+  () => (localStorage.getItem('pedro.v2.code.roomba') ?? '').includes('UNIQUE_MARKER_A'),
+);
+const savedToA = await page.evaluate(
+  () => (localStorage.getItem('pedro.v2.code.moon_hill') ?? '').includes('UNIQUE_MARKER_A'),
+);
+check('autosave never writes to the new mission\'s key', !leaked);
+check('pending autosave is flushed to the original mission', savedToA);
+const roombaCode = await page.evaluate(() => window.__pedroEditor.getValue());
+check('mission switch loads the new mission\'s own code', !roombaCode.includes('UNIQUE_MARKER_A'));
+
+/* ---------- Stability: rapid double-run does not corrupt state ---------- */
+await page.selectOption('.header-field select', 'moon_hill');
+await page.waitForTimeout(800);
+await page.evaluate(() => window.__pedroEditor.setValue('from pedro import *\nmove()\nmove()\n'));
+// Two clicks in the same tick: second must act as Stop, not start a second run.
+await page.evaluate(() => {
+  document.querySelector('.run-btn').click();
+  document.querySelector('.run-btn').click();
+});
+await page.waitForFunction(
+  () => document.querySelector('.status-text')?.textContent?.includes('Run stopped'),
+  null,
+  { timeout: 15000 },
+);
+check('double-click Run behaves as Stop', true);
+// …and the engine recovers: a fresh run finishes normally.
+await page.click('.run-btn');
+await page.waitForFunction(
+  () => {
+    const t = document.querySelector('.status-text')?.textContent ?? '';
+    return t.includes('Great job') || t.includes('wall');
+  },
+  null,
+  { timeout: 30000 },
+);
+check('engine recovers and runs again after double-click', true, await page.textContent('.status-text'));
 
 check('no JS errors', errors.length === 0, errors.join(' | '));
 await browser.close();

@@ -31,6 +31,8 @@ class _World:
             while c < max_cols:
                 ch = line[c] if c < len(line) else '#'
                 if ch in _DIR_SYMBOLS:
+                    if self.start is not None:
+                        raise PedroError('Multiple Pedro start positions found in world')
                     self.start = (r, c, _DIR_SYMBOLS[ch])
                     digits = ''
                     cc = c + 1

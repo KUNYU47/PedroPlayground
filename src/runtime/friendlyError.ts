@@ -46,10 +46,12 @@ export function friendlyError(err: RunError): string {
   }
 }
 
+// Only callable names — Python keywords (while/for/if/def) are useless as
+// "Did you mean X()?" suggestions.
 const KNOWN_NAMES = [
   'move', 'turn_left', 'plant_flag', 'pick_flag',
   'front_is_clear', 'flag_present', 'facing_north', 'facing_east',
-  'main', 'while', 'for', 'if', 'def', 'range', 'print',
+  'main', 'range', 'print',
 ];
 
 function suggestName(name: string): string {

@@ -1,10 +1,12 @@
 import { chromium } from 'playwright-core';
 import fs from 'node:fs';
-const browser = await chromium.launch({ executablePath: '/usr/bin/google-chrome', headless: true, args: ['--no-sandbox'] });
+const CHROME = process.env.CHROME_PATH ?? '/usr/bin/google-chrome';
+const URL = process.env.PEDRO_URL ?? 'http://127.0.0.1:8471/';
+const browser = await chromium.launch({ executablePath: CHROME, headless: true, args: ['--no-sandbox'] });
 const page = await browser.newPage({ viewport: { width: 1500, height: 900 } });
 const errors = [];
 page.on('pageerror', (e) => errors.push(e.message));
-await page.goto('http://127.0.0.1:8471/', { waitUntil: 'domcontentloaded' });
+await page.goto(URL, { waitUntil: 'domcontentloaded' });
 await page.waitForSelector('.engine-pill.ready', { timeout: 90000 });
 const setCode = (code) => page.evaluate((c) => window.__pedroEditor.setValue(c), code);
 const getCode = () => page.evaluate(() => window.__pedroEditor.getValue());

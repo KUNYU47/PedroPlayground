@@ -49,11 +49,14 @@ await setCode(page, solution);
 await page.click('.run-btn');
 await page.waitForFunction(
   () => document.querySelector('.status-text')?.textContent?.includes('Great job'),
+  null,
   { timeout: 30000 },
 );
 await page.waitForTimeout(2000);
 const status1 = await page.textContent('.status-text');
-check('reference solution runs', /61 steps/.test(status1), status1);
+// Assert success + a positive step count — do NOT couple to the exact step
+// count of the reference solution/world (they may legitimately change).
+check('reference solution runs', /Great job! Program finished in [1-9]\d* steps?/.test(status1), status1);
 await shot(page, '02-after-run');
 
 // Transport: pause + step back.
@@ -71,6 +74,7 @@ await setCode(page, 'from pedro import *\n\nfor i in range(20):\n    move()\n');
 await page.click('.run-btn');
 await page.waitForFunction(
   () => document.querySelector('.status-text')?.textContent?.includes('wall'),
+  null,
   { timeout: 30000 },
 );
 check('wall crash → friendly error', true, await page.textContent('.status-text'));

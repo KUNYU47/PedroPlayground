@@ -76,10 +76,10 @@ export function WorldCanvas(props: WorldCanvasProps) {
   // Load sprites + tileset once.
   useEffect(() => {
     let cancelled = false;
-    Sprites.load('/assets/Astronaut-Sheet.png')
+    Sprites.load(`${import.meta.env.BASE_URL}assets/Astronaut-Sheet.png`)
       .then((s) => { if (!cancelled) engineRef.current.sprites = s; })
       .catch(() => { /* sprite optional: renderer falls back to a drawn astronaut */ });
-    Tileset.load('/assets/Blocks.png')
+    Tileset.load(`${import.meta.env.BASE_URL}assets/Blocks.png`)
       .then((t) => { if (!cancelled) engineRef.current.tileset = t; })
       .catch(() => { /* tileset optional: procedural fallback tiles */ });
     return () => { cancelled = true; };

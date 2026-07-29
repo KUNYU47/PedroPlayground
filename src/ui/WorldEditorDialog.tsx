@@ -23,6 +23,12 @@ interface Props {
 }
 
 const DIR_CHARS = ['^', '>', 'v', '<'];
+const MIN_ROWS = 3;
+const MAX_ROWS = 25;
+const MIN_COLS = 3;
+const MAX_COLS = 30;
+const clampRows = (n: number) => Math.max(MIN_ROWS, Math.min(MAX_ROWS, n));
+const clampCols = (n: number) => Math.max(MIN_COLS, Math.min(MAX_COLS, n));
 
 function emptyGrid(rows: number, cols: number): string[][] {
   const g = Array.from({ length: rows }, () => Array(cols).fill('.'));
@@ -41,6 +47,10 @@ function emptyGrid(rows: number, cols: number): string[][] {
 export function WorldEditorDialog({ open, onClose, onSave }: Props) {
   const [rows, setRows] = useState(9);
   const [cols, setCols] = useState(11);
+  // Raw text of the size inputs — committed (parsed + clamped) on blur/Enter
+  // so multi-digit numbers can actually be typed.
+  const [rowsInput, setRowsInput] = useState('9');
+  const [colsInput, setColsInput] = useState('11');
   const [grid, setGrid] = useState<string[][]>(() => emptyGrid(9, 11));
   const [tool, setTool] = useState<Tool>('wall');
   const [name, setName] = useState('my_world');
@@ -53,7 +63,7 @@ export function WorldEditorDialog({ open, onClose, onSave }: Props) {
   // Load the Blocks tileset so the editor shows the same art as the stage.
   useEffect(() => {
     let cancelled = false;
-    Tileset.load('/assets/Blocks.png')
+    Tileset.load(`${import.meta.env.BASE_URL}assets/Blocks.png`)
       .then((ts) => {
         if (!cancelled) {
           setTiles({ wall: tileDataUrl(ts, 'wall', 1), floor: tileDataUrl(ts, 'floor', 0) });
@@ -97,16 +107,30 @@ export function WorldEditorDialog({ open, onClose, onSave }: Props) {
   };
 
   const resize = (nr: number, nc: number) => {
-    nr = Math.max(3, Math.min(25, nr));
-    nc = Math.max(3, Math.min(30, nc));
+    nr = clampRows(nr);
+    nc = clampCols(nc);
     setRows(nr);
     setCols(nc);
+    setRowsInput(String(nr));
+    setColsInput(String(nc));
     setGrid((old) => {
       const g = Array.from({ length: nr }, (_, r) =>
         Array.from({ length: nc }, (_, c) => old[r]?.[c] ?? '.'),
       );
       return g;
     });
+  };
+
+  const commitRows = () => {
+    const n = clampRows(parseInt(rowsInput, 10) || MIN_ROWS);
+    if (n !== rows) resize(n, cols);
+    else setRowsInput(String(n));
+  };
+
+  const commitCols = () => {
+    const n = clampCols(parseInt(colsInput, 10) || MIN_COLS);
+    if (n !== cols) resize(rows, n);
+    else setColsInput(String(n));
   };
 
   const paint = useCallback((r: number, c: number) => {
@@ -120,8 +144,7 @@ export function WorldEditorDialog({ open, onClose, onSave }: Props) {
         case 'flag': {
           if (/^[F2-9]$/.test(cur)) {
             const n = cur === 'F' ? 2 : parseInt(cur, 10) + 1;
-            g[r][c] = n > 9 ? '.' : n === 2 ? '2' : String(n);
-            if (cur === 'F') g[r][c] = '2';
+            g[r][c] = n > 9 ? '.' : String(n);
           } else {
             g[r][c] = 'F';
           }
@@ -200,7 +223,8 @@ export function WorldEditorDialog({ open, onClose, onSave }: Props) {
     a.href = url;
     a.download = `${name || 'my_world'}.txt`;
     a.click();
-    URL.revokeObjectURL(url);
+    // Async revoke: Firefox can cancel the download if revoked synchronously.
+    setTimeout(() => URL.revokeObjectURL(url), 0);
     setError(null);
   };
 
@@ -221,11 +245,19 @@ export function WorldEditorDialog({ open, onClose, onSave }: Props) {
       }
       const lines = text.split('\n').map((l) => l.replace(/\r$/, '')).filter((l) => l.trim().length > 0);
       const width = Math.max(...lines.map((l) => l.length));
-      setRows(lines.length);
-      setCols(width);
-      setGrid(lines.map((l) => l.padEnd(width, '#').split('')));
+      const nr = clampRows(lines.length);
+      const nc = clampCols(width);
+      if (nr !== lines.length || nc !== width) {
+        setError(`World is ${width}×${lines.length} — too big for the editor, cropped to ${nc}×${nr}.`);
+      } else {
+        setError(null);
+      }
+      setRows(nr);
+      setCols(nc);
+      setRowsInput(String(nr));
+      setColsInput(String(nc));
+      setGrid(lines.slice(0, nr).map((l) => l.padEnd(width, '#').slice(0, nc).split('')));
       setName(file.name.replace(/\.txt$/i, '').replace(/[^A-Za-z0-9_-]/g, '_') || 'my_world');
-      setError(null);
     };
     input.click();
   };
@@ -257,8 +289,8 @@ export function WorldEditorDialog({ open, onClose, onSave }: Props) {
             </button>
           ))}
           <span className="spacer" />
-          <label>Rows <input type="number" value={rows} min={3} max={25} onChange={(e) => resize(parseInt(e.target.value) || 3, cols)} /></label>
-          <label>Cols <input type="number" value={cols} min={3} max={30} onChange={(e) => resize(rows, parseInt(e.target.value) || 3)} /></label>
+          <label>Rows <input type="number" value={rowsInput} min={MIN_ROWS} max={MAX_ROWS} onChange={(e) => setRowsInput(e.target.value)} onBlur={commitRows} onKeyDown={(e) => e.key === 'Enter' && commitRows()} /></label>
+          <label>Cols <input type="number" value={colsInput} min={MIN_COLS} max={MAX_COLS} onChange={(e) => setColsInput(e.target.value)} onBlur={commitCols} onKeyDown={(e) => e.key === 'Enter' && commitCols()} /></label>
           <button className="tool-btn" onClick={handleMaze}>🌀 Maze</button>
           <button className="tool-btn" onClick={handleReset} title="Clear the grid: all floor, wall edges, Pedro back to the top-left">🧹 Reset</button>
         </div>

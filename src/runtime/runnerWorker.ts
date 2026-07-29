@@ -1,3 +1,4 @@
+/// <reference lib="webworker" />
 /**
  * Web Worker hosting the Pyodide Python interpreter. Student code runs here
  * so the UI thread never blocks, snapshots stream back as they happen, and a
@@ -8,7 +9,7 @@ import { loadPyodide, type PyodideInterface } from 'pyodide';
 import { PEDRO_PY } from './pedroPy';
 
 export type WorkerInMessage =
-  | { type: 'init' }
+  | { type: 'init'; pyodideUrl: string }
   | { type: 'run'; runId: number; code: string; worldText: string; stepCap: number }
   | { type: 'lint'; lintId: number; code: string };
 
@@ -23,9 +24,9 @@ export type WorkerOutMessage =
 let pyodide: PyodideInterface | null = null;
 let activeRunId = -1;
 
-async function init(): Promise<void> {
+async function init(pyodideUrl: string): Promise<void> {
   try {
-    pyodide = await loadPyodide({ indexURL: new URL('/pyodide/', self.location.origin).href });
+    pyodide = await loadPyodide({ indexURL: pyodideUrl });
     // Bridge: Python -> JS snapshot streaming.
     (self as unknown as Record<string, unknown>).__post_snapshot__ = (payload: string) => {
       const msg: WorkerOutMessage = {
@@ -54,7 +55,7 @@ async function init(): Promise<void> {
 self.onmessage = async (event: MessageEvent<WorkerInMessage>) => {
   const data = event.data;
   if (data.type === 'init') {
-    await init();
+    await init(data.pyodideUrl);
     return;
   }
   if (!pyodide) return;
@@ -62,17 +63,18 @@ self.onmessage = async (event: MessageEvent<WorkerInMessage>) => {
   if (data.type === 'run') {
     activeRunId = data.runId;
     let result: unknown;
+    const fn = pyodide.globals.get('__run_student__');
     try {
-      const fn = pyodide.globals.get('__run_student__');
       const json = fn(data.code, data.worldText, data.stepCap);
-      fn.destroy?.();
       result = JSON.parse(json as string);
     } catch (err) {
       result = {
         status: 'error',
         stats: { totalPickedUp: 0, plantedAtBase: 0, baseError: false, expectedFlags: 0 },
-        error: { kind: 'RuntimeError', message: String(err), line: null },
+        error: { kind: 'RuntimeError', message: lastErrorLine(err), line: null },
       };
+    } finally {
+      fn?.destroy?.(); // never leak PyProxies, even on the error path
     }
     const msg: WorkerOutMessage = { type: 'run-done', runId: data.runId, result };
     self.postMessage(msg);
@@ -82,15 +84,24 @@ self.onmessage = async (event: MessageEvent<WorkerInMessage>) => {
 
   if (data.type === 'lint') {
     let errors: unknown[] = [];
+    const fn = pyodide.globals.get('__lint_student__');
     try {
-      const fn = pyodide.globals.get('__lint_student__');
       const json = fn(data.code);
-      fn.destroy?.();
       errors = (JSON.parse(json as string) as { errors: unknown[] }).errors;
     } catch {
       errors = [];
+    } finally {
+      fn?.destroy?.();
     }
     const msg: WorkerOutMessage = { type: 'lint-result', lintId: data.lintId, errors };
     self.postMessage(msg);
   }
 };
+
+/** Pyodide errors stringify to a full multi-line traceback — keep only the
+ * last (meaningful) line for the kid-facing status bar. */
+function lastErrorLine(err: unknown): string {
+  const msg = err instanceof Error ? err.message : String(err);
+  const lines = msg.split('\n').map((l) => l.trim()).filter(Boolean);
+  return lines[lines.length - 1] ?? 'Unknown error';
+}

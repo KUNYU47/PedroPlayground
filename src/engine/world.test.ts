@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { generateMaze, parseWorldText, serializeWorld } from './world';
 import { Replay } from './replay';
-import { BASE, EMPTY, Snapshot, WALL } from './types';
+import { BASE, EMPTY, Snapshot, WALL, WorldData } from './types';
 
 describe('parseWorldText', () => {
   it('parses walls, floors, flags and start position', () => {
@@ -44,6 +44,21 @@ describe('parseWorldText', () => {
   it('round-trips through serializeWorld', () => {
     const text = '#####\n#>F.#\n#.3B#\n#####';
     expect(serializeWorld(parseWorldText(text))).toBe(text);
+  });
+
+  it('serializes a flag pile on the start cell without data loss', () => {
+    const data: WorldData = { grid: [[6, 0], [1, 1]], startRow: 0, startCol: 0, startDir: 1 };
+    const text = serializeWorld(data);
+    expect(text).toBe('>5.\n##');
+    const reparsed = parseWorldText(text);
+    expect(reparsed.grid[0][0]).toBe(6); // pile of 5 preserved
+    expect(reparsed.startRow).toBe(0);
+    expect(reparsed.startCol).toBe(0);
+    expect(reparsed.startDir).toBe(1);
+  });
+
+  it('rejects worlds with more than one start position', () => {
+    expect(() => parseWorldText('>.\n.<')).toThrow(/Multiple Pedro start/);
   });
 });
 

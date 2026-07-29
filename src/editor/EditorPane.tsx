@@ -129,6 +129,7 @@ export const EditorPane = forwardRef<EditorPaneHandle, EditorPaneProps>(function
     return () => {
       editor.dispose();
       editorRef.current = null;
+      delete (window as unknown as { __pedroEditor?: unknown }).__pedroEditor;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);

@@ -3,9 +3,12 @@
  *
  * Stability design:
  *  - The worker is lazily created and warmed up in the background.
- *  - Every run has a hard timeout; on timeout or worker crash the worker is
- *    terminated and a fresh one spawned (snapshots streamed so far survive).
+ *  - Every run has a hard timeout; on timeout, cancellation or worker crash
+ *    the worker is terminated and a fresh one spawned (snapshots streamed so
+ *    far survive).
  *  - All calls are serialized per worker — a new run cancels the previous one.
+ *  - Every run message carries a runId; stale messages from a previous run
+ *    are ignored so snapshots/stdout/results never cross-contaminate.
  */
 import type { RunError, RunOutcome, RunStats, Snapshot } from '../engine/types';
 import type { WorkerInMessage, WorkerOutMessage } from './runnerWorker';
@@ -34,6 +37,7 @@ export class RunnerClient {
   private readyPromise: Promise<boolean> | null = null;
   private runId = 0;
   private lintId = 0;
+  private pendingRunId: number | null = null;
   private pendingRun: { resolve: RunResolve; callbacks: RunCallbacks; timer: number } | null = null;
   private pendingLints = new Map<number, (errors: LintError[]) => void>();
   private onReadyChange?: (ready: boolean) => void;
@@ -59,11 +63,13 @@ export class RunnerClient {
     this.disposeWorker();
     this.worker = new Worker(new URL('./runnerWorker.ts', import.meta.url), { type: 'module' });
     this.worker.onerror = () => {
-      // A hard crash: reject current run and respawn on next use.
-      this.failRun({ status: 'error', error: { kind: 'WorkerError', message: 'The Python engine crashed and was restarted.', line: null }, stats: emptyStats() });
+      // A hard crash (or the worker script itself failed to load): reject the
+      // current run, settle the warmup promise, and respawn on next use.
+      this.finishRun({ status: 'error', error: { kind: 'WorkerError', message: 'The Python engine crashed and was restarted.', line: null }, stats: emptyStats() });
       this.ready = false;
       this.readyPromise = null;
       this.onReadyChange?.(false);
+      onReady?.(false);
     };
     this.worker.onmessage = (event: MessageEvent<WorkerOutMessage>) => {
       const msg = event.data;
@@ -75,16 +81,24 @@ export class RunnerClient {
           break;
         case 'init-error':
           this.ready = false;
+          // Allow the next warmup() to retry with a fresh worker instead of
+          // caching the failure forever.
+          this.readyPromise = null;
           this.onReadyChange?.(false);
           onReady?.(false);
           break;
         case 'snapshot':
-          this.pendingRun?.callbacks.onSnapshot?.(msg.snapshot as Snapshot);
+          if (this.pendingRun && msg.runId === this.pendingRunId) {
+            this.pendingRun.callbacks.onSnapshot?.(msg.snapshot as Snapshot);
+          }
           break;
         case 'stdout':
-          this.pendingRun?.callbacks.onStdout?.(msg.text);
+          if (this.pendingRun && msg.runId === this.pendingRunId) {
+            this.pendingRun.callbacks.onStdout?.(msg.text);
+          }
           break;
         case 'run-done': {
+          if (!this.pendingRun || msg.runId !== this.pendingRunId) break;
           const result = msg.result as
             | { status: 'ok'; stats: RunStats }
             | { status: 'error'; stats: RunStats; error: RunError };
@@ -103,7 +117,12 @@ export class RunnerClient {
         }
       }
     };
-    const initMsg: WorkerInMessage = { type: 'init' };
+    const initMsg: WorkerInMessage = {
+      type: 'init',
+      // Resolved against the page (not the worker script) so the app works
+      // when deployed under a sub-path (e.g. GitHub Pages project sites).
+      pyodideUrl: new URL('pyodide/', document.baseURI).href,
+    };
     this.worker.postMessage(initMsg);
   }
 
@@ -119,20 +138,17 @@ export class RunnerClient {
     const pending = this.pendingRun;
     if (!pending) return;
     this.pendingRun = null;
+    this.pendingRunId = null;
     window.clearTimeout(pending.timer);
     pending.resolve(outcome);
   }
 
-  private failRun(outcome: RunOutcome): void {
-    this.finishRun(outcome);
-  }
-
-  /** Cancel any in-flight run (keeps the worker alive). */
+  /** Cancel any in-flight run (terminates + respawns the worker). */
   cancelRun(): void {
     if (!this.pendingRun) return;
     // The worker cannot be interrupted mid-Python without terminating it,
     // so we terminate + respawn for guaranteed cancellation.
-    this.failRun({ status: 'cancelled' });
+    this.finishRun({ status: 'cancelled' });
     this.respawn();
   }
 
@@ -144,27 +160,38 @@ export class RunnerClient {
   }
 
   async run(code: string, worldText: string, callbacks: RunCallbacks = {}): Promise<RunOutcome> {
-    const ok = await this.warmup();
-    if (!ok || !this.worker) {
-      return {
-        status: 'error',
-        error: { kind: 'EngineError', message: 'The Python engine failed to start. Check your connection and reload.', line: null },
-        stats: emptyStats(),
-      };
-    }
     if (this.pendingRun) {
-      this.failRun({ status: 'cancelled' });
+      // A new run supersedes the old one — and since the old Python code is
+      // still executing inside the worker, we must terminate + respawn (not
+      // just abandon the promise) to guarantee the new run starts clean.
+      this.cancelRun();
     }
     const id = ++this.runId;
     return new Promise<RunOutcome>((resolve) => {
-      const timer = window.setTimeout(() => {
-        // Hard kill: worker is stuck (e.g. infinite loop in pure Python).
-        this.finishRun({ status: 'timeout' });
-        this.respawn();
-      }, RUN_TIMEOUT_MS);
-      this.pendingRun = { resolve, callbacks, timer };
-      const msg: WorkerInMessage = { type: 'run', runId: id, code, worldText, stepCap: STEP_CAP };
-      this.worker!.postMessage(msg);
+      // Register the run BEFORE waiting for the engine, so Stop/cancel works
+      // even while Pyodide is still waking up.
+      this.pendingRun = { resolve, callbacks, timer: 0 };
+      this.pendingRunId = id;
+      void (async () => {
+        const ok = await this.warmup();
+        // Cancelled while the engine was warming up — drop silently.
+        if (!this.pendingRun || this.pendingRunId !== id) return;
+        if (!ok || !this.worker) {
+          this.finishRun({
+            status: 'error',
+            error: { kind: 'EngineError', message: 'The Python engine failed to start. Check your connection and reload.', line: null },
+            stats: emptyStats(),
+          });
+          return;
+        }
+        this.pendingRun.timer = window.setTimeout(() => {
+          // Hard kill: worker is stuck (e.g. infinite loop in pure Python).
+          this.finishRun({ status: 'timeout' });
+          this.respawn();
+        }, RUN_TIMEOUT_MS);
+        const msg: WorkerInMessage = { type: 'run', runId: id, code, worldText, stepCap: STEP_CAP };
+        this.worker!.postMessage(msg);
+      })();
     });
   }
 
@@ -181,6 +208,15 @@ export class RunnerClient {
         if (this.pendingLints.delete(id)) resolve([]);
       }, 5000);
     });
+  }
+
+  /** Terminate the worker and settle all pending calls (component teardown). */
+  dispose(): void {
+    this.finishRun({ status: 'cancelled' });
+    for (const cb of this.pendingLints.values()) cb([]);
+    this.pendingLints.clear();
+    this.readyPromise = null;
+    this.disposeWorker();
   }
 }
 

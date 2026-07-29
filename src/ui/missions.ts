@@ -41,8 +41,11 @@ export async function fetchText(url: string): Promise<string> {
   return res.text();
 }
 
-export const fetchWorld = (name: string) => fetchText(`/worlds/${name}`);
-export const fetchScaffold = (name: string) => fetchText(`/scaffolds/${name}`);
+// BASE_URL-aware so the app also works deployed under a sub-path.
+const BASE = import.meta.env.BASE_URL;
+
+export const fetchWorld = (name: string) => fetchText(`${BASE}worlds/${name}`);
+export const fetchScaffold = (name: string) => fetchText(`${BASE}scaffolds/${name}`);
 
 /**
  * Names (no extension) of .txt files in the user-editable `worlds/` folder
@@ -111,7 +114,16 @@ export interface CustomWorld {
 export function loadCustomWorlds(): CustomWorld[] {
   try {
     const raw = localStorage.getItem(LS_PREFIX + 'customWorlds');
-    return raw ? (JSON.parse(raw) as CustomWorld[]) : [];
+    if (!raw) return [];
+    const parsed: unknown = JSON.parse(raw);
+    // Corrupted storage (hand-edited, old format) must not crash the app.
+    if (!Array.isArray(parsed)) return [];
+    return parsed.filter(
+      (w): w is CustomWorld =>
+        typeof w === 'object' && w !== null &&
+        typeof (w as CustomWorld).name === 'string' &&
+        typeof (w as CustomWorld).text === 'string',
+    );
   } catch {
     return [];
   }

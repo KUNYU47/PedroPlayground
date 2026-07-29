@@ -35,9 +35,15 @@ export class World {
   readonly cols: number;
 
   constructor(grid: number[][]) {
+    const cols = grid.length > 0 ? grid[0].length : 0;
+    for (const row of grid) {
+      if (row.length !== cols) {
+        throw new Error('World grid must be rectangular — every row needs the same number of columns');
+      }
+    }
     this.grid = grid;
     this.rows = grid.length;
-    this.cols = grid.length > 0 ? grid[0].length : 0;
+    this.cols = cols;
   }
 
   cloneGrid(): number[][] {
@@ -97,7 +103,10 @@ export function parseWorldText(text: string): WorldData {
     let c = 0;
     while (c < maxCols) {
       const ch = c < line.length ? line[c] : '#';
-      if (ch in DIRECTION_SYMBOLS) {
+      if (Object.prototype.hasOwnProperty.call(DIRECTION_SYMBOLS, ch)) {
+        if (startRow !== null) {
+          throw new Error(`Multiple Pedro start positions (^ > v <) found — keep exactly one (rows ${startRow + 1} and ${r + 1})`);
+        }
         startRow = r;
         startCol = c;
         startDir = DIRECTION_SYMBOLS[ch];
@@ -135,11 +144,13 @@ export function serializeWorld(data: WorldData): string {
   for (let r = 0; r < data.grid.length; r++) {
     let line = '';
     for (let c = 0; c < data.grid[r].length; c++) {
+      const v = data.grid[r][c];
       if (r === data.startRow && c === data.startCol) {
-        line += DIR_TO_CHAR[data.startDir];
+        // Direction char; a flag pile on the start cell round-trips as
+        // trailing digits (mirrors the parse-side digit-run syntax).
+        line += DIR_TO_CHAR[data.startDir] + (v >= 2 ? String(v - 1) : '');
         continue;
       }
-      const v = data.grid[r][c];
       if (v === WALL) line += '#';
       else if (v === BASE) line += 'B';
       else if (v === EMPTY) line += '.';
