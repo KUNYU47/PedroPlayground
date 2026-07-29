@@ -25,12 +25,17 @@ import os
 import posixpath
 import shutil
 import subprocess
+import sys
 import threading
 import urllib.parse
 import webbrowser
 
-ROOT = os.path.dirname(os.path.abspath(__file__))
-DIST = os.path.join(ROOT, "dist")
+# When frozen by PyInstaller, bundled data (dist/) lives in the temporary
+# sys._MEIPASS extraction dir, while user folders (worlds/, scaffolds/)
+# must live next to the .exe so they are editable and persistent.
+FROZEN = getattr(sys, "frozen", False)
+ROOT = os.path.dirname(sys.executable) if FROZEN else os.path.dirname(os.path.abspath(__file__))
+DIST = os.path.join(sys._MEIPASS, "dist") if FROZEN else os.path.join(ROOT, "dist")
 
 # Folders the user may customize; served with priority over dist/.
 USER_DIRS = ("worlds", "scaffolds")
@@ -119,7 +124,11 @@ def main() -> None:
     parser.add_argument("--no-browser", action="store_true", help="do not open the browser")
     args = parser.parse_args()
 
-    if args.build or not os.path.isdir(DIST):
+    if args.build:
+        if FROZEN:
+            raise SystemExit("❌ --build is not available in the packaged app.")
+        build()
+    elif not os.path.isdir(DIST):
         build()
 
     seed_user_dirs()

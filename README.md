@@ -87,6 +87,22 @@ to itself, seeded with the built-in content. From then on:
 This only applies when serving through `launch.py`; statically hosted builds
 just use the bundled content.
 
+### 📦 Standalone Windows app (CI/CD)
+
+A GitHub Actions workflow ([`.github/workflows/build-windows.yml`](.github/workflows/build-windows.yml))
+builds a single-file `PedroPlayground.exe` — no Python or Node needed on the
+target machine. Double-clicking it starts the local server and opens the
+browser; `worlds/` and `scaffolds/` are created next to the exe on first run.
+
+- **Trigger**: push a `v*` tag (also creates a GitHub Release with the exe
+  attached), or run the workflow manually from the Actions tab (artifact
+  available for 30 days).
+- **How it works**: the runner builds the frontend (`npm run build`), then
+  PyInstaller bundles `launch.py` + `dist/` via [`build_windows.spec`](build_windows.spec),
+  and smoke-tests that the exe actually serves the app.
+- **Local build** (on a Windows machine): `npm run build && pip install pyinstaller && pyinstaller build_windows.spec --noconfirm`
+  → `dist/PedroPlayground.exe`.
+
 ## 🧪 Tests
 
 ```bash
