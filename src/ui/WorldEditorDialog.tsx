@@ -46,7 +46,9 @@ export function WorldEditorDialog({ open, onClose, onSave }: Props) {
   const [name, setName] = useState('my_world');
   const [error, setError] = useState<string | null>(null);
   const [tiles, setTiles] = useState<{ wall: string; floor: string } | null>(null);
+  const [size, setSize] = useState<{ width: number; height: number } | null>(null);
   const paintingRef = useRef(false);
+  const dialogRef = useRef<HTMLDivElement>(null);
 
   // Load the Blocks tileset so the editor shows the same art as the stage.
   useEffect(() => {
@@ -66,6 +68,33 @@ export function WorldEditorDialog({ open, onClose, onSave }: Props) {
     window.addEventListener('pointerup', up);
     return () => window.removeEventListener('pointerup', up);
   }, []);
+
+  /** Drag the bottom-right handle to resize the dialog (clamped to viewport). */
+  const onResizeHandleDown = (e: React.PointerEvent<HTMLDivElement>) => {
+    e.preventDefault();
+    e.stopPropagation();
+    const el = dialogRef.current;
+    if (!el) return;
+    const startX = e.clientX;
+    const startY = e.clientY;
+    const rect = el.getBoundingClientRect();
+    const startW = rect.width;
+    const startH = rect.height;
+    const onMove = (ev: PointerEvent) => {
+      setSize({
+        width: Math.round(Math.max(520, Math.min(window.innerWidth * 0.95, startW + ev.clientX - startX))),
+        height: Math.round(Math.max(420, Math.min(window.innerHeight * 0.9, startH + ev.clientY - startY))),
+      });
+    };
+    const onUp = () => {
+      window.removeEventListener('pointermove', onMove);
+      window.removeEventListener('pointerup', onUp);
+      window.removeEventListener('pointercancel', onUp);
+    };
+    window.addEventListener('pointermove', onMove);
+    window.addEventListener('pointerup', onUp);
+    window.addEventListener('pointercancel', onUp);
+  };
 
   const resize = (nr: number, nc: number) => {
     nr = Math.max(3, Math.min(25, nr));
@@ -118,6 +147,12 @@ export function WorldEditorDialog({ open, onClose, onSave }: Props) {
   }, [tool]);
 
   const toText = (): string => grid.map((row) => row.join('')).join('\n');
+
+  /** Reset: every cell becomes floor, edges become walls, Pedro back to (1,1). */
+  const handleReset = () => {
+    setGrid(emptyGrid(rows, cols));
+    setError(null);
+  };
 
   const handleMaze = () => {
     const maze = generateMaze(rows, cols);
@@ -199,7 +234,12 @@ export function WorldEditorDialog({ open, onClose, onSave }: Props) {
 
   return (
     <div className="dialog-backdrop" onClick={onClose}>
-      <div className="dialog world-editor" onClick={(e) => e.stopPropagation()}>
+      <div
+        ref={dialogRef}
+        className="dialog world-editor"
+        style={size ? { width: size.width, height: size.height } : undefined}
+        onClick={(e) => e.stopPropagation()}
+      >
         <div className="dialog-title">
           <span>🗺️ World Editor</span>
           <button className="icon-btn" onClick={onClose} title="Close">✕</button>
@@ -220,6 +260,7 @@ export function WorldEditorDialog({ open, onClose, onSave }: Props) {
           <label>Rows <input type="number" value={rows} min={3} max={25} onChange={(e) => resize(parseInt(e.target.value) || 3, cols)} /></label>
           <label>Cols <input type="number" value={cols} min={3} max={30} onChange={(e) => resize(rows, parseInt(e.target.value) || 3)} /></label>
           <button className="tool-btn" onClick={handleMaze}>🌀 Maze</button>
+          <button className="tool-btn" onClick={handleReset} title="Clear the grid: all floor, wall edges, Pedro back to the top-left">🧹 Reset</button>
         </div>
 
         <div
@@ -267,6 +308,11 @@ export function WorldEditorDialog({ open, onClose, onSave }: Props) {
           <button className="btn ghost" onClick={handleImport} title="Load a world from a file">📥 Import</button>
           {error && <span className="dialog-error">{error}</span>}
         </div>
+        <div
+          className="we-resize-handle"
+          title="Drag to resize"
+          onPointerDown={onResizeHandleDown}
+        />
       </div>
     </div>
   );

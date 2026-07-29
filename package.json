@@ -10,7 +10,7 @@
     "preview": "vite preview",
     "start": "python3 launch.py",
     "test": "vitest run",
-    "test:e2e": "node e2e/smoke.mjs && node e2e/stability.mjs && node e2e/files.mjs"
+    "test:e2e": "node e2e/smoke.mjs && node e2e/stability.mjs && node e2e/features.mjs && node e2e/files.mjs"
   },
   "dependencies": {
     "monaco-editor": "^0.52.2",

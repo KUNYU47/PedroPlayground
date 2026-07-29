@@ -496,6 +496,34 @@ select:focus, .text-input:focus { box-shadow: 0 0 0 2px rgba(125, 211, 252, 0.25
 
 /* world editor */
 
+.dialog.world-editor {
+  position: relative;
+  max-width: 95vw; /* resizable: override the generic 860px cap */
+}
+
+.we-resize-handle {
+  position: absolute;
+  right: 4px;
+  bottom: 4px;
+  width: 18px;
+  height: 18px;
+  cursor: nwse-resize;
+  border-radius: 4px;
+  background: linear-gradient(
+    135deg,
+    transparent 0 55%,
+    var(--border) 55% 65%,
+    transparent 65% 75%,
+    var(--border) 75% 85%,
+    transparent 85%
+  );
+  touch-action: none;
+}
+
+.we-resize-handle:hover {
+  background-color: var(--bg-3);
+}
+
 .world-editor-toolbar {
   display: flex;
   align-items: center;
@@ -550,7 +578,8 @@ select:focus, .text-input:focus { box-shadow: 0 0 0 2px rgba(125, 211, 252, 0.25
   border-radius: 10px;
   border: 1px solid var(--border);
   overflow: auto;
-  max-height: 55vh;
+  flex: 1; /* grow with the resizable dialog instead of a fixed vh cap */
+  min-height: 200px;
   touch-action: none;
 }
 

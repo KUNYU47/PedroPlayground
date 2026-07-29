@@ -67,6 +67,21 @@ python3 launch.py          # serves dist/ and opens http://127.0.0.1:8471
 # or: npm start
 ```
 
+### Customizable `worlds/` and `scaffolds/` folders (like the legacy app)
+
+On first launch, `launch.py` creates `worlds/` and `scaffolds/` folders next
+to itself, seeded with the built-in content. From then on:
+
+- **Files in these folders take priority** over the built-in ones — edit a
+  world `.txt` or a `*_starter.py` scaffold there to customize it.
+- **Drop in new `<name>.txt` world files** and they show up in the world
+  dropdown under "Worlds folder" (after a refresh).
+- **Delete a file** to fall back to the built-in version; delete a whole
+  folder and it is re-seeded on next launch.
+
+This only applies when serving through `launch.py`; statically hosted builds
+just use the bundled content.
+
 ## 🧪 Tests
 
 ```bash

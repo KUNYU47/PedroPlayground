@@ -44,6 +44,22 @@ export async function fetchText(url: string): Promise<string> {
 export const fetchWorld = (name: string) => fetchText(`/worlds/${name}`);
 export const fetchScaffold = (name: string) => fetchText(`/scaffolds/${name}`);
 
+/**
+ * Names (no extension) of .txt files in the user-editable `worlds/` folder
+ * created by launch.py next to the launcher. Empty when the app is served
+ * statically (no launcher) — the built-in list is the fallback.
+ */
+export async function fetchUserWorldNames(): Promise<string[]> {
+  try {
+    const res = await fetch('/api/user-files?type=worlds');
+    if (!res.ok) return [];
+    const data: unknown = await res.json();
+    return Array.isArray(data) ? data.filter((n): n is string => typeof n === 'string') : [];
+  } catch {
+    return [];
+  }
+}
+
 export function prettyWorldName(file: string): string {
   return file.replace(/\.txt$/, '').replace(/_/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase());
 }

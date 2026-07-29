@@ -8,6 +8,10 @@ __pycache__/
 build/
 *.spec.bak
 
+# User-editable folders created by launch.py on first run
+/worlds/
+/scaffolds/
+
 # OS / editors
 .DS_Store
 Thumbs.db

@@ -18,7 +18,7 @@ import { WorldEditorDialog } from './ui/WorldEditorDialog';
 import { HelpDialog } from './ui/HelpDialog';
 import {
   BUILTIN_WORLDS, CustomWorld, MISSIONS, Mission,
-  fetchScaffold, fetchWorld, loadCustomWorlds, loadSavedCode,
+  fetchScaffold, fetchUserWorldNames, fetchWorld, loadCustomWorlds, loadSavedCode,
   prettyWorldName, randomizeStart, saveCode, saveCustomWorlds,
 } from './ui/missions';
 
@@ -54,6 +54,9 @@ export default function App() {
   const [status, setStatus] = useState<{ text: string; tone: Tone }>({ text: 'Starting the Python engine…', tone: 'info' });
   const [stdout, setStdout] = useState<string[]>([]);
   const [customWorlds, setCustomWorlds] = useState<CustomWorld[]>(() => loadCustomWorlds());
+  // Worlds from the user-editable worlds/ folder (launch.py); empty when
+  // the app is served statically without the launcher.
+  const [folderWorlds, setFolderWorlds] = useState<string[]>([]);
   const [editorOpen, setEditorOpen] = useState(false);
   const [helpOpen, setHelpOpen] = useState(false);
   const [dragOver, setDragOver] = useState(false);
@@ -124,6 +127,7 @@ export default function App() {
   useEffect(() => {
     void loadMission(MISSIONS[0]);
     void runner.warmup();
+    void fetchUserWorldNames().then(setFolderWorlds);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -424,6 +428,15 @@ export default function App() {
                 <option key={w} value={w}>{prettyWorldName(w)}</option>
               ))}
             </optgroup>
+            {folderWorlds.filter((n) => !BUILTIN_WORLDS.includes(`${n}.txt`)).length > 0 && (
+              <optgroup label="Worlds folder">
+                {folderWorlds
+                  .filter((n) => !BUILTIN_WORLDS.includes(`${n}.txt`))
+                  .map((n) => (
+                    <option key={n} value={`${n}.txt`}>📁 {prettyWorldName(n)}</option>
+                  ))}
+              </optgroup>
+            )}
             {customWorlds.length > 0 && (
               <optgroup label="My worlds">
                 {customWorlds.map((w) => (

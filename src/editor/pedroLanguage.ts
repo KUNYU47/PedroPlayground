@@ -79,6 +79,8 @@ interface Snippet {
   doc: string;
 }
 
+// Single-line skeletons only: one suggestion inserts at most ONE line with at
+// most ONE function call — kids write the loop/branch bodies themselves.
 const SNIPPETS: Snippet[] = [
   {
     label: 'from pedro import *',
@@ -87,33 +89,28 @@ const SNIPPETS: Snippet[] = [
   },
   {
     label: 'def main()',
-    insert: 'def main():\n\t${1:pass}\n\nif __name__ == \'__main__\':\n\tmain()',
+    insert: 'def main():',
     doc: 'The main function — where your program starts.',
   },
   {
     label: 'for i in range',
-    insert: 'for ${1:i} in range(${2:n}):\n\t${3:pass}',
+    insert: 'for ${1:i} in range(${2:n}):',
     doc: 'Repeat something a fixed number of times.',
   },
   {
     label: 'while front_is_clear',
-    insert: 'while front_is_clear():\n\t${1:move()}',
+    insert: 'while front_is_clear():',
     doc: 'Keep going until Pedro reaches a wall.',
   },
   {
     label: 'while flag_present',
-    insert: 'while flag_present():\n\t${1:pick_flag()}',
+    insert: 'while flag_present():',
     doc: 'Pick up every flag on this square.',
   },
   {
-    label: 'if / else',
-    insert: 'if ${1:front_is_clear()}:\n\t${2:move()}\nelse:\n\t${3:turn_left()}',
-    doc: 'Choose between two actions.',
-  },
-  {
-    label: 'if',
-    insert: 'if ${1:condition}:\n\t${2:pass}',
-    doc: 'Do something only when a condition is true.',
+    label: 'if front_is_clear',
+    insert: 'if front_is_clear():',
+    doc: 'Do something only when the way ahead is clear.',
   },
 ];
 
@@ -166,7 +163,7 @@ function pedroMarkdown(api: ApiDoc): monaco.IMarkdownString {
 
 export function registerPedroLanguage(): void {
   monaco.languages.registerCompletionItemProvider('python', {
-    triggerCharacters: ['_', '('],
+    triggerCharacters: ['_'],
     provideCompletionItems(model, position) {
       const word = model.getWordUntilPosition(position);
       const range = new monaco.Range(
@@ -209,6 +206,8 @@ export function registerPedroLanguage(): void {
         });
       }
       for (const snip of SNIPPETS) {
+        // Defensive: never offer a completion that inserts multiple lines.
+        if (snip.insert.includes('\n')) continue;
         push({
           label: snip.label,
           kind: monaco.languages.CompletionItemKind.Snippet,
