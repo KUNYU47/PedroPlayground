@@ -10,7 +10,7 @@ import { EditorPane, EditorPaneHandle, Diagnostic } from './editor/EditorPane';
 import { heuristicDiagnostics } from './editor/heuristics';
 import { parseWorldText } from './engine/world';
 import { Replay } from './engine/replay';
-import { Snapshot, WorldData, RunOutcome } from './engine/types';
+import { LineEvent, Snapshot, WorldData, RunOutcome } from './engine/types';
 import { RunnerClient } from './runtime/runnerClient';
 import { friendlyError } from './runtime/friendlyError';
 import { WorldCanvas } from './renderer/WorldCanvas';
@@ -60,6 +60,9 @@ export default function App() {
   const [worldVersion, setWorldVersion] = useState(0);
   const [splitPct, setSplitPct] = useState(44);
   const [runProgress, setRunProgress] = useState(0);
+  // Debug (step-by-step) mode: recorded line events + current position.
+  const [debugEvents, setDebugEvents] = useState<LineEvent[] | null>(null);
+  const [debugIdx, setDebugIdx] = useState(0);
 
   const snapshotsRef = useRef<Snapshot[]>([]);
   const lintTimerRef = useRef(0);
@@ -72,6 +75,8 @@ export default function App() {
   const runningRef = useRef(false);
   const stdoutIdRef = useRef(0);
   const consoleRef = useRef<HTMLDivElement>(null);
+  // snapBefore[i] = how many action snapshots happened BEFORE line event i.
+  const snapBeforeRef = useRef<number[]>([]);
 
   const speedMs = Math.round(1100 * Math.pow(60 / 1100, speedPct / 100));
 
@@ -201,7 +206,7 @@ export default function App() {
 
   /* ------------------------------ run control ---------------------------- */
 
-  const finishRun = useCallback((outcome: RunOutcome, data: WorldData) => {
+  const finishRun = useCallback((outcome: RunOutcome, data: WorldData, autoPlay = true) => {
     const snaps = snapshotsRef.current;
     const rp = new Replay(data, snaps);
     setReplay(rp);
@@ -221,7 +226,7 @@ export default function App() {
         } else {
           setStatus({ text: `Great job! Program finished in ${snaps.length} step${snaps.length === 1 ? '' : 's'}. 🎉`, tone: 'ok' });
         }
-        setPlaying(true);
+        if (autoPlay) setPlaying(true);
         break;
       }
       case 'error': {
@@ -231,7 +236,7 @@ export default function App() {
           tone: 'error',
         });
         editorRef.current?.setErrorLine(outcome.error.line);
-        setPlaying(true);
+        if (autoPlay) setPlaying(true);
         break;
       }
       case 'timeout':
@@ -247,7 +252,60 @@ export default function App() {
     }
   }, []);
 
-  const handleRun = useCallback(async () => {
+  /* ------------------------------ debug mode ----------------------------- */
+
+  /** Move the debugger to line event `idx`: stage shows the world state just
+   *  BEFORE that line runs; the editor highlights the line; locals appear
+   *  in the debug bar. */
+  const gotoDebug = useCallback((idx: number, events?: LineEvent[]) => {
+    const evs = events ?? debugEvents;
+    if (!evs || evs.length === 0) return;
+    const i = Math.max(0, Math.min(idx, evs.length - 1));
+    setDebugIdx(i);
+    const step = (snapBeforeRef.current[i] ?? 0) - 1;
+    setPlaying(false);
+    setSeek((s) => ({ step, nonce: s.nonce + 1 }));
+    setTargetStep(step);
+    setDisplayStep(step);
+    editorRef.current?.setActiveLine(evs[i].line);
+    // Preview the next line that will run (loop-back edges included).
+    editorRef.current?.setNextLine(i + 1 < evs.length ? evs[i + 1].line : null);
+    editorRef.current?.revealLine(evs[i].line);
+  }, [debugEvents]);
+
+  const enterDebug = useCallback((events: LineEvent[], snaps: Snapshot[]) => {
+    // snapBefore[i] = number of action snapshots with event index < i, i.e.
+    // how many world-state changes happened BEFORE line event i runs.
+    const at = new Array<number>(events.length).fill(0);
+    for (const s of snaps) {
+      const e = s.event ?? -1;
+      if (e >= 0 && e < at.length) at[e] += 1;
+    }
+    const before = new Array<number>(events.length);
+    let cum = 0;
+    for (let i = 0; i < at.length; i++) {
+      before[i] = cum;
+      cum += at[i];
+    }
+    snapBeforeRef.current = before;
+    setDebugEvents(events);
+    gotoDebug(0, events);
+  }, [gotoDebug]);
+
+  const quitDebug = useCallback(() => {
+    setDebugEvents(null);
+    editorRef.current?.setActiveLine(null);
+    editorRef.current?.setNextLine(null);
+    // Leave the stage at the final state of the run.
+    const last = snapshotsRef.current.length - 1;
+    if (last >= 0) {
+      setSeek((s) => ({ step: last, nonce: s.nonce + 1 }));
+      setTargetStep(last);
+      setDisplayStep(last);
+    }
+  }, []);
+
+  const handleRun = useCallback(async (debug = false) => {
     // Synchronous guard via ref: the `phase` state may lag a render behind,
     // so rapid double-clicks / repeated F5 must not start two runs.
     if (runningRef.current) {
@@ -255,6 +313,7 @@ export default function App() {
       return;
     }
     if (!worldText || !worldData) return;
+    setDebugEvents(null);
     editorRef.current?.setErrorLine(null);
     editorRef.current?.setActiveLine(null);
     editorRef.current?.setNextLine(null);
@@ -286,12 +345,20 @@ export default function App() {
         setRunProgress(snapshotsRef.current.length);
       },
       onStdout: (t) => setStdout((old) => [...old.slice(-199), { id: ++stdoutIdRef.current, text: t }]),
-    });
+    }, debug);
     runningRef.current = false;
     // The mission was switched mid-run — the new mission owns the stage now.
     if (seq !== missionSeqRef.current) return;
-    finishRun(outcome, data);
-  }, [phase, worldText, worldData, mission, engineReady, runner, finishRun]);
+    finishRun(outcome, data, !debug);
+    // Enter step-by-step debug mode when a trace was recorded.
+    if (debug && outcome.status !== 'timeout' && outcome.status !== 'cancelled'
+        && outcome.lineEvents && outcome.lineEvents.length > 0) {
+      enterDebug(outcome.lineEvents, snapshotsRef.current);
+      if (outcome.status === 'ok') {
+        setStatus({ text: '🐞 Debug mode — use ◀ ▶ to step through your code line by line!', tone: 'info' });
+      }
+    }
+  }, [phase, worldText, worldData, mission, engineReady, runner, finishRun, enterDebug]);
 
   /* --------------------------- playback control -------------------------- */
 
@@ -407,17 +474,21 @@ export default function App() {
     setDisplayStep(step);
   }, [replay, replayLen]);
 
-  // Global F5 shortcut (ignored while a dialog is open).
+  // Global F5 (run) and F10 (debug step) shortcuts — ignored while a
+  // dialog is open.
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.key === 'F5') {
         e.preventDefault();
         if (!editorOpen && !helpOpen) void handleRun();
+      } else if (e.key === 'F10' && debugEvents) {
+        e.preventDefault();
+        gotoDebug(debugIdx + 1);
       }
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [handleRun, editorOpen, helpOpen]);
+  }, [handleRun, editorOpen, helpOpen, debugEvents, debugIdx, gotoDebug]);
 
   // Keep the console pinned to the latest line of output.
   useEffect(() => {
@@ -539,6 +610,27 @@ export default function App() {
               <span className="pane-hint">F5 / Ctrl+Enter to run</span>
             </span>
           </div>
+          {debugEvents && (
+            <div className="debug-bar">
+              <span className="debug-title">🐞 Debug</span>
+              <button className="mini-btn" onClick={() => gotoDebug(0)} disabled={debugIdx === 0} title="Back to the first line">⏮</button>
+              <button className="mini-btn" onClick={() => gotoDebug(debugIdx - 1)} disabled={debugIdx === 0} title="Previous line">◀</button>
+              <span className="debug-pos">
+                Line {debugEvents[debugIdx].line} · {debugIdx + 1}/{debugEvents.length}
+                {debugIdx + 1 < debugEvents.length && (
+                  <span className="debug-next"> ➜ next: line {debugEvents[debugIdx + 1].line}</span>
+                )}
+              </span>
+              <button className="mini-btn" onClick={() => gotoDebug(debugIdx + 1)} disabled={debugIdx >= debugEvents.length - 1} title="Next line (F10)">▶</button>
+              <button className="mini-btn" onClick={() => gotoDebug(debugEvents.length - 1)} disabled={debugIdx >= debugEvents.length - 1} title="Jump to the end">⏭</button>
+              <span className="debug-vars">
+                {Object.entries(debugEvents[debugIdx].locals).length > 0
+                  ? Object.entries(debugEvents[debugIdx].locals).map(([k, v]) => `${k} = ${v}`).join('   ')
+                  : 'no variables yet'}
+              </span>
+              <button className="mini-btn" onClick={quitDebug} title="Exit debug mode">✕</button>
+            </div>
+          )}
           <EditorPane
             ref={editorRef}
             initialValue={codeRef.current}
@@ -568,6 +660,14 @@ export default function App() {
               title="Run (F5)"
             >
               {runLabel}
+            </button>
+            <button
+              className="btn ghost"
+              onClick={() => void handleRun(true)}
+              disabled={!worldData || running}
+              title="Run, then step through your code line by line"
+            >
+              🐞 Debug
             </button>
             <div className="transport-group">
               <button className="icon-btn" onClick={handleReset} disabled={replayLen === 0} title="Back to start">⏮</button>
@@ -612,8 +712,9 @@ export default function App() {
               seek={seek}
               onStepChange={setDisplayStep}
               onPlayEnd={() => setPlaying(false)}
-              onActiveLine={(line) => editorRef.current?.setActiveLine(line)}
-              onNextLine={(line) => editorRef.current?.setNextLine(line)}
+              // In debug mode the debugger owns the line highlight.
+              onActiveLine={(line) => { if (!debugEvents) editorRef.current?.setActiveLine(line); }}
+              onNextLine={(line) => { if (!debugEvents) editorRef.current?.setNextLine(line); }}
             />
           </div>
 

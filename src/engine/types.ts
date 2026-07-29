@@ -33,6 +33,17 @@ export interface Snapshot {
   changes: Array<[number, number, number]>;
   /** 1-based line in the student program that triggered this action */
   line: number | null;
+  /** Index of the debug LineEvent during which this action happened;
+   *  -1/undefined when the run was not a debug run. */
+  event?: number;
+}
+
+/** One executed source line, captured during a debug run (sys.settrace). */
+export interface LineEvent {
+  /** 1-based line number in the student program */
+  line: number;
+  /** Printable data variables visible in that frame (name → repr) */
+  locals: Record<string, string>;
 }
 
 export interface WorldData {
@@ -57,7 +68,7 @@ export interface RunError {
 }
 
 export type RunOutcome =
-  | { status: 'ok'; stats: RunStats }
-  | { status: 'error'; error: RunError; stats: RunStats }
+  | { status: 'ok'; stats: RunStats; lineEvents?: LineEvent[] }
+  | { status: 'error'; error: RunError; stats: RunStats; lineEvents?: LineEvent[] }
   | { status: 'timeout' }
   | { status: 'cancelled' };

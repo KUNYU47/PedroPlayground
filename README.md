@@ -38,6 +38,11 @@ Version 2 is a ground-up rewrite of the original Tkinter desktop app
   streams back as a compact diff snapshot. Step ▶/◀, scrub the timeline,
   play at any speed, or jump around — all free, even after a crash or an
   infinite loop (snapshots stream *before* the timeout hits).
+- **🐞 Step-by-step debugger**: the Debug button runs the program with line
+  tracing, then lets students step through *every executed line* (◀ ▶, F10),
+  with the current line highlighted in the editor, the world state shown
+  just before that line runs, and a live variables panel — even for programs
+  that crash (step right up to the crash line).
 - **Kid-proof stability**:
   - Runaway programs are hard-killed (worker terminate + automatic respawn);
     partial progress is still replayed

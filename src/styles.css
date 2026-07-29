@@ -446,6 +446,40 @@ select:focus, .text-input:focus { box-shadow: 0 0 0 2px rgba(125, 211, 252, 0.25
   white-space: nowrap;
 }
 
+/* debug bar */
+
+.debug-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px;
+  background: var(--bg-2);
+  border-bottom: 1px solid var(--accent);
+  font-size: 12.5px;
+  flex-wrap: wrap;
+}
+
+.debug-title { font-weight: 800; }
+
+.debug-pos {
+  font-weight: 700;
+  color: var(--text-dim);
+  white-space: nowrap;
+}
+
+.debug-next { color: #a5d6a7; font-weight: 600; }
+
+.debug-vars {
+  flex: 1;
+  min-width: 120px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: #a5d6a7;
+  font-family: 'Consolas', 'Menlo', monospace;
+  font-size: 12px;
+}
+
 /* -------------------------------- dialog ------------------------------- */
 
 .dialog-backdrop {

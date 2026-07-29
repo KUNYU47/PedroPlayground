@@ -10,7 +10,7 @@
  *  - Every run message carries a runId; stale messages from a previous run
  *    are ignored so snapshots/stdout/results never cross-contaminate.
  */
-import type { RunError, RunOutcome, RunStats, Snapshot } from '../engine/types';
+import type { LineEvent, RunError, RunOutcome, RunStats, Snapshot } from '../engine/types';
 import type { WorkerInMessage, WorkerOutMessage } from './runnerWorker';
 
 export interface LintError {
@@ -100,12 +100,12 @@ export class RunnerClient {
         case 'run-done': {
           if (!this.pendingRun || msg.runId !== this.pendingRunId) break;
           const result = msg.result as
-            | { status: 'ok'; stats: RunStats }
-            | { status: 'error'; stats: RunStats; error: RunError };
+            | { status: 'ok'; stats: RunStats; lineEvents?: LineEvent[] }
+            | { status: 'error'; stats: RunStats; error: RunError; lineEvents?: LineEvent[] };
           this.finishRun(
             result.status === 'ok'
-              ? { status: 'ok', stats: result.stats }
-              : { status: 'error', error: result.error, stats: result.stats },
+              ? { status: 'ok', stats: result.stats, lineEvents: result.lineEvents }
+              : { status: 'error', error: result.error, stats: result.stats, lineEvents: result.lineEvents },
           );
           break;
         }
@@ -159,7 +159,7 @@ export class RunnerClient {
     void this.warmup();
   }
 
-  async run(code: string, worldText: string, callbacks: RunCallbacks = {}): Promise<RunOutcome> {
+  async run(code: string, worldText: string, callbacks: RunCallbacks = {}, debug = false): Promise<RunOutcome> {
     if (this.pendingRun) {
       // A new run supersedes the old one — and since the old Python code is
       // still executing inside the worker, we must terminate + respawn (not
@@ -189,7 +189,7 @@ export class RunnerClient {
           this.finishRun({ status: 'timeout' });
           this.respawn();
         }, RUN_TIMEOUT_MS);
-        const msg: WorkerInMessage = { type: 'run', runId: id, code, worldText, stepCap: STEP_CAP };
+        const msg: WorkerInMessage = { type: 'run', runId: id, code, worldText, stepCap: STEP_CAP, debug };
         this.worker!.postMessage(msg);
       })();
     });

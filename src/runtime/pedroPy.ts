@@ -16,6 +16,31 @@ _CELL_SYMBOLS = {'.': 0, '#': 1, 'F': 2, 'B': -1,
                  '2': 3, '3': 4, '4': 5, '5': 6, '6': 7, '7': 8, '8': 9, '9': 10}
 _DIR_SYMBOLS = {'^': 0, '>': 1, 'v': 2, '<': 3}
 
+# Debug recorder: when enabled, every executed student line is captured as
+# {'line': n, 'locals': {...}} so the UI can offer step-by-step debugging.
+_DEBUG = None
+_DEBUG_EVENT_CAP = 5000
+
+
+def _safe_locals(frame):
+    """Small, printable snapshot of a frame's data variables."""
+    out = {}
+    try:
+        items = list(frame.f_locals.items())
+    except Exception:
+        return out
+    for k, v in items:
+        if k.startswith('_') or callable(v):
+            continue
+        try:
+            r = repr(v)
+        except Exception:
+            r = '?'
+        out[k] = r[:40]
+        if len(out) >= 20:
+            break
+    return out
+
 
 class _World:
     def __init__(self, text):
@@ -109,6 +134,10 @@ class _Pedro:
             'flagsCarried': self.flags,
             'changes': changes,
             'line': self.current_line,
+            # Index of the debug line-event during which this action happened
+            # (-1 when not debugging) — lets the debugger map world states to
+            # source lines.
+            'event': len(_DEBUG['events']) - 1 if _DEBUG is not None else -1,
         }))
 
     def move(self):
@@ -163,7 +192,22 @@ _API_NAMES = ('move', 'turn_left', 'plant_flag', 'pick_flag',
               'front_is_clear', 'flag_present', 'facing_north', 'facing_east')
 
 
-def __run_student__(code, world_text, step_cap):
+def _with_events(payload):
+    if _DEBUG is not None:
+        payload['lineEvents'] = _DEBUG['events']
+    return json.dumps(payload)
+
+
+def __run_student__(code, world_text, step_cap, debug=False):
+    global _DEBUG
+    _DEBUG = {'events': []} if debug else None
+    try:
+        return _run_student_impl(code, world_text, step_cap)
+    finally:
+        _DEBUG = None
+
+
+def _run_student_impl(code, world_text, step_cap):
     import types
     world = _World(world_text)
     pedro = _Pedro(world, step_cap)
@@ -189,8 +233,17 @@ def __run_student__(code, world_text, step_cap):
 
     def tracer(frame, event, arg):
         if frame.f_code.co_filename == '<student>':
-            if event == 'line':
+            if event == 'call' and frame.f_code.co_name != '<module>':
+                # Entering a student function: highlight from the def header
+                # (f_lineno is the def line here, f_locals holds the bound
+                # arguments — nice for the variables panel).
                 pedro.current_line = frame.f_lineno
+                if _DEBUG is not None and len(_DEBUG['events']) < _DEBUG_EVENT_CAP:
+                    _DEBUG['events'].append({'line': frame.f_lineno, 'locals': _safe_locals(frame)})
+            elif event == 'line':
+                pedro.current_line = frame.f_lineno
+                if _DEBUG is not None and len(_DEBUG['events']) < _DEBUG_EVENT_CAP:
+                    _DEBUG['events'].append({'line': frame.f_lineno, 'locals': _safe_locals(frame)})
             return tracer
         return None
 
@@ -202,7 +255,7 @@ def __run_student__(code, world_text, step_cap):
         finally:
             sys.settrace(None)
             sys.modules.pop('pedro', None)
-        return json.dumps({'status': 'ok', 'stats': pedro.stats()})
+        return _with_events({'status': 'ok', 'stats': pedro.stats()})
     except PedroError as e:
         line = None
         tb = traceback.extract_tb(sys.exc_info()[2])
@@ -210,10 +263,10 @@ def __run_student__(code, world_text, step_cap):
             if f.filename == '<student>':
                 line = f.lineno
                 break
-        return json.dumps({'status': 'error', 'stats': pedro.stats(), 'error': {
+        return _with_events({'status': 'error', 'stats': pedro.stats(), 'error': {
             'kind': 'PedroError', 'message': str(e), 'line': line}})
     except SyntaxError as e:
-        return json.dumps({'status': 'error', 'stats': pedro.stats(), 'error': {
+        return _with_events({'status': 'error', 'stats': pedro.stats(), 'error': {
             'kind': 'SyntaxError', 'message': e.msg or 'invalid syntax',
             'line': e.lineno, 'offset': e.offset}})
     except Exception as e:
@@ -223,7 +276,7 @@ def __run_student__(code, world_text, step_cap):
             if f.filename == '<student>':
                 line = f.lineno
                 break
-        return json.dumps({'status': 'error', 'stats': pedro.stats(), 'error': {
+        return _with_events({'status': 'error', 'stats': pedro.stats(), 'error': {
             'kind': type(e).__name__, 'message': str(e), 'line': line}})
 
 

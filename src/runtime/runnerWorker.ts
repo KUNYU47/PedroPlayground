@@ -10,7 +10,7 @@ import { PEDRO_PY } from './pedroPy';
 
 export type WorkerInMessage =
   | { type: 'init'; pyodideUrl: string }
-  | { type: 'run'; runId: number; code: string; worldText: string; stepCap: number }
+  | { type: 'run'; runId: number; code: string; worldText: string; stepCap: number; debug?: boolean }
   | { type: 'lint'; lintId: number; code: string };
 
 export type WorkerOutMessage =
@@ -65,7 +65,7 @@ self.onmessage = async (event: MessageEvent<WorkerInMessage>) => {
     let result: unknown;
     const fn = pyodide.globals.get('__run_student__');
     try {
-      const json = fn(data.code, data.worldText, data.stepCap);
+      const json = fn(data.code, data.worldText, data.stepCap, data.debug === true);
       result = JSON.parse(json as string);
     } catch (err) {
       result = {

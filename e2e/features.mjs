@@ -166,6 +166,57 @@ await page.waitForFunction(
 );
 check('engine recovers and runs again after double-click', true, await page.textContent('.status-text'));
 
+/* ---------- Debugger: step through code line by line ---------- */
+await page.evaluate(() => window.__pedroEditor.setValue([
+  'from pedro import *',
+  '',
+  'def main():',
+  '    steps = 2',
+  '    for i in range(steps):',
+  '        move()',
+  '',
+  "if __name__ == '__main__':",
+  '    main()',
+].join('\n')));
+await page.click('text=🐞 Debug');
+await page.waitForSelector('.debug-bar', { timeout: 30000 });
+check('debug bar appears after Debug run', true);
+const pos0 = await page.textContent('.debug-pos');
+check('debugger starts at first line', /Line \d+ · 1\//.test(pos0 ?? ''), pos0 ?? '');
+// step forward: position advances and highlight follows the trace
+await page.click('.debug-bar .mini-btn:nth-of-type(3)'); // ▶ next line
+await page.waitForTimeout(200);
+const pos1 = await page.textContent('.debug-pos');
+check('step forward advances the line', pos1 !== pos0 && /· 2\//.test(pos1 ?? ''), `${pos0} → ${pos1}`);
+// step until the loop variable becomes visible in the vars strip
+let varsText = '';
+for (let i = 0; i < 12; i++) {
+  varsText = (await page.textContent('.debug-vars')) ?? '';
+  if (varsText.includes('i =') || varsText.includes('steps =')) break;
+  await page.click('.debug-bar .mini-btn:nth-of-type(3)');
+  await page.waitForTimeout(150);
+}
+check('variables panel shows locals', /steps = 2|i = \d/.test(varsText), varsText);
+// active-line decoration is present in the editor
+const activeLines = await page.evaluate(() => document.querySelectorAll('.pedro-exec-line').length);
+check('current line highlighted in editor', activeLines > 0, `${activeLines} highlighted`);
+// next-line preview decoration + text indicator
+const nextLines = await page.evaluate(() => document.querySelectorAll('.pedro-next-line').length);
+check('next line preview highlighted', nextLines > 0, `${nextLines} highlighted`);
+const nextText = await page.textContent('.debug-next');
+check('debug bar shows next line', /next: line \d+/.test(nextText ?? ''), nextText ?? '');
+// step back works
+const posBefore = await page.textContent('.debug-pos');
+await page.click('.debug-bar .mini-btn:nth-of-type(2)'); // ◀ previous line
+await page.waitForTimeout(150);
+const posBack = await page.textContent('.debug-pos');
+check('step back goes to previous line', posBack !== posBefore, `${posBefore} → ${posBack}`);
+// quit debug
+await page.click('.debug-bar .mini-btn:last-of-type');
+await page.waitForTimeout(200);
+const debugBarGone = (await page.$('.debug-bar')) === null;
+check('quit debug mode', debugBarGone);
+
 check('no JS errors', errors.length === 0, errors.join(' | '));
 await browser.close();
 console.log(failed === 0 ? 'FEATURES: ALL PASS' : `FEATURES: ${failed} FAILURES`);
